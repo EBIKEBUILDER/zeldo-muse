@@ -5,33 +5,42 @@ import {
   useGameStore,
 } from "../store/gameStore";
 import { getMoveVector, takeAttack } from "./input";
-import { SPAWN, circleHitsSolid, screenAt } from "../world/tiles";
+import { sfx } from "./audio";
+import {
+  DUNGEON_SPAWN,
+  OVERWORLD_RETURN,
+  WorldDef,
+  circleHitsSolid,
+  findTiles,
+  screenAtWorld,
+  tileScenePos,
+  touchesTile,
+  worldById,
+} from "../world/tiles";
 
 /**
- * Stage 3 — the game simulation, run once per frame before rendering.
+ * Stage 4 — the full game simulation.
  *
- * Player: velocity movement with acceleration + friction, 8-way snapped
- * facing, sword swings, knockback, invulnerability, death -> respawn.
- * Enemies: wander until the player is close, then chase; contact deals
- * damage with per-enemy cooldown; knockback + hit flash; death drops
- * pickups and respawns after a while.
- * Pickups: pop out with random velocity, magnet to the player, collect.
+ * Everything from stage 3 (movement, sword, enemies, pickups) plus the
+ * quest layer: dungeon doorways, the key pedestal, the boss gate, the
+ * mini-boss, the chest, and the title/dead/victory phases.
  */
 
 const PLAYER_R = 0.45;
 const ACCEL = 55;
 const MAXV = 8;
 const FRICTION = 11;
-const MAX_STEP = 0.1; // collision sub-step (frame-rate independent walls)
+const MAX_STEP = 0.1;
 
 const SWING_TIME = 0.25;
 const SWING_CD = 0.45;
 const SWING_HIT_AT = 0.08;
 const SWING_RANGE = 2.6;
-const SWING_ARC = 1.05; // radians each side of facing (~60 deg)
+const SWING_ARC = 1.05;
 
 const ENEMY_R = 0.5;
 const ENEMY_SPEED = 4.2;
+const BOSS_SPEED = 5.0;
 const ENEMY_WANDER = 1.8;
 const AGGRO = 11;
 const TOUCH_RANGE = 1.15;
@@ -46,18 +55,31 @@ function angDiff(a: number, b: number): number {
 
 function spawnPickup(
   id: number,
+  world: WorldDef["id"],
   kind: "rupee" | "heart",
   x: number,
   z: number,
 ): PickupState {
   const a = Math.random() * Math.PI * 2;
   const sp = 2.5 + Math.random() * 2.5;
-  return { id, kind, x, z, vx: Math.cos(a) * sp, vz: Math.sin(a) * sp, t: 0 };
+  return { id, world, kind, x, z, vx: Math.cos(a) * sp, vz: Math.sin(a) * sp, t: 0 };
 }
 
 export function updateGame(dt: number): void {
   const st = useGameStore.getState();
+  if (st.quest.phase !== "playing") return;
   const p = st.player;
+  const world = worldById(p.world);
+  const quest = { ...st.quest };
+
+  quest.playTime += dt;
+  quest.doorCd = Math.max(0, quest.doorCd - dt);
+  quest.hintCd = Math.max(0, quest.hintCd - dt);
+  quest.messageT = Math.max(0, quest.messageT - dt);
+  const say = (text: string) => {
+    quest.message = text;
+    quest.messageT = 3;
+  };
 
   // ---- timers ----
   let invulnT = Math.max(0, p.invulnT - dt);
@@ -71,9 +93,10 @@ export function updateGame(dt: number): void {
     swing.t = 0;
     swing.cd = SWING_CD;
     swing.didHit = false;
+    sfx.swing();
   }
 
-  // ---- player movement (velocity, accel + friction) ----
+  // ---- player movement ----
   const dir = getMoveVector();
   let { vx, vz } = p;
   const moveScale = swing.active ? 0.4 : 1;
@@ -101,10 +124,10 @@ export function updateGame(dt: number): void {
   const steps = Math.max(1, Math.ceil(travel / MAX_STEP));
   for (let i = 0; i < steps; i++) {
     const nx = x + (vx * dt) / steps;
-    if (!circleHitsSolid(nx, z, PLAYER_R)) x = nx;
+    if (!circleHitsSolid(world, nx, z, PLAYER_R, quest.gateOpen)) x = nx;
     else vx = 0;
     const nz = z + (vz * dt) / steps;
-    if (!circleHitsSolid(x, nz, PLAYER_R)) z = nz;
+    if (!circleHitsSolid(world, x, nz, PLAYER_R, quest.gateOpen)) z = nz;
     else vz = 0;
   }
 
@@ -113,7 +136,52 @@ export function updateGame(dt: number): void {
     facing = Math.round(Math.atan2(dir.x, -dir.z) / (Math.PI / 4)) * (Math.PI / 4);
   }
 
-  // ---- sword hit resolution (single hit moment per swing) ----
+  // ---- doorways ----
+  let worldId = p.world;
+  if (quest.doorCd <= 0 && touchesTile(world, x, z, 0.5, "D")) {
+    if (world.id === "overworld") {
+      worldId = "dungeon";
+      x = DUNGEON_SPAWN.x;
+      z = DUNGEON_SPAWN.z;
+      say("The dungeon swallows you...");
+    } else {
+      worldId = "overworld";
+      x = OVERWORLD_RETURN.x;
+      z = OVERWORLD_RETURN.z;
+      say("You escape into daylight.");
+    }
+    quest.doorCd = 1;
+    vx = 0;
+    vz = 0;
+  }
+  const wNow = worldById(worldId);
+
+  // ---- key pedestal ----
+  if (
+    !quest.hasKey &&
+    worldId === "dungeon" &&
+    touchesTile(wNow, x, z, 0.7, "K")
+  ) {
+    quest.hasKey = true;
+    sfx.key();
+    say("You got the Dungeon Key! It hums with purpose.");
+  }
+
+  // ---- boss gate ----
+  if (touchesTile(wNow, x, z, 0.6, "G")) {
+    if (quest.gateOpen) {
+      // walk through
+    } else if (quest.hasKey) {
+      quest.gateOpen = true;
+      sfx.gate();
+      say("The key turns! The gate grinds open.");
+    } else if (quest.hintCd <= 0) {
+      quest.hintCd = 4;
+      say("Locked tight. A keyhole glints in the iron...");
+    }
+  }
+
+  // ---- sword hit resolution ----
   let enemies: EnemyState[] = st.enemies;
   let breakables: BreakableState[] = st.breakables;
   const newPickups: PickupState[] = [];
@@ -122,45 +190,57 @@ export function updateGame(dt: number): void {
 
   if (swing.active && !swing.didHit && swing.t >= SWING_HIT_AT) {
     swing.didHit = true;
+    let hitSomething = false;
     enemies = st.enemies.map((e) => {
-      if (e.dead) return e;
+      if (e.dead || e.world !== worldId) return e;
       const dx = e.x - x;
       const dz = e.z - z;
       const d = Math.hypot(dx, dz);
       if (d > SWING_RANGE + ENEMY_R) return e;
       if (angDiff(Math.atan2(dx, -dz), facing) > SWING_ARC) return e;
+      hitSomething = true;
       const hp = e.hp - 1;
       const nx = d > 0.01 ? dx / d : 0;
       const nz = d > 0.01 ? dz / d : 0;
       if (hp <= 0) {
-        newPickups.push(spawnPickup(nextId++, "rupee", e.x, e.z));
-        if (Math.random() < 0.3) {
-          newPickups.push(spawnPickup(nextId++, "heart", e.x, e.z));
+        sfx.enemyDie();
+        newPickups.push(spawnPickup(nextId++, worldId, "rupee", e.x, e.z));
+        if (e.boss) {
+          quest.chestUnlocked = true;
+          sfx.chest();
+          say("The boss falls! Somewhere, a chest clicks open...");
+          newPickups.push(spawnPickup(nextId++, worldId, "heart", e.x, e.z));
+          newPickups.push(spawnPickup(nextId++, worldId, "rupee", e.x, e.z));
+          newPickups.push(spawnPickup(nextId++, worldId, "rupee", e.x, e.z));
+        } else if (Math.random() < 0.3) {
+          newPickups.push(spawnPickup(nextId++, worldId, "heart", e.x, e.z));
         }
         return { ...e, hp: 0, dead: true, deadT: 0 };
       }
       return { ...e, hp, hurtT: 0.25, vx: e.vx + nx * 11, vz: e.vz + nz * 11 };
     });
     breakables = st.breakables.map((b) => {
-      if (!b.alive) return b;
+      if (!b.alive || b.world !== worldId) return b;
       const dx = b.x - x;
       const dz = b.z - z;
       const d = Math.hypot(dx, dz);
       if (d > SWING_RANGE) return b;
       if (angDiff(Math.atan2(dx, -dz), facing) > SWING_ARC) return b;
+      hitSomething = true;
       if (b.kind === "grass") {
         if (Math.random() < 0.12) {
-          newPickups.push(spawnPickup(nextId++, "rupee", b.x, b.z));
+          newPickups.push(spawnPickup(nextId++, worldId, "rupee", b.x, b.z));
         }
       } else {
-        newPickups.push(spawnPickup(nextId++, "rupee", b.x, b.z));
-        newPickups.push(spawnPickup(nextId++, "rupee", b.x, b.z));
+        newPickups.push(spawnPickup(nextId++, worldId, "rupee", b.x, b.z));
+        newPickups.push(spawnPickup(nextId++, worldId, "rupee", b.x, b.z));
         if (Math.random() < 0.2) {
-          newPickups.push(spawnPickup(nextId++, "heart", b.x, b.z));
+          newPickups.push(spawnPickup(nextId++, worldId, "heart", b.x, b.z));
         }
       }
       return { ...b, alive: false };
     });
+    if (hitSomething) sfx.swordHit();
   }
 
   // ---- enemies ----
@@ -168,6 +248,7 @@ export function updateGame(dt: number): void {
   enemies = enemies.map((e) => {
     if (e.dead) {
       const deadT = e.deadT + dt;
+      if (e.boss) return { ...e, deadT }; // the boss stays dead
       if (deadT > ENEMY_RESPAWN) {
         return {
           ...e,
@@ -184,19 +265,21 @@ export function updateGame(dt: number): void {
       }
       return { ...e, deadT };
     }
+    const eWorld = worldById(e.world);
     const dx = x - e.x;
     const dz = z - e.z;
     const distP = Math.hypot(dx, dz);
+    const seesPlayer = e.world === worldId && distP < AGGRO;
     let tx: number;
     let tz: number;
     let spd: number;
     let wx = e.wx;
     let wz = e.wz;
     let wanderT = e.wanderT;
-    if (distP < AGGRO) {
+    if (seesPlayer) {
       tx = x;
       tz = z;
-      spd = ENEMY_SPEED;
+      spd = e.boss ? BOSS_SPEED : ENEMY_SPEED;
     } else {
       wanderT -= dt;
       if (wanderT <= 0 || Math.hypot(wx - e.x, wz - e.z) < 0.5) {
@@ -218,7 +301,7 @@ export function updateGame(dt: number): void {
     let evz = e.vz + ((ddz / dd) * spd - e.vz) * k;
     let ex = e.x + evx * dt;
     let ez = e.z + evz * dt;
-    if (circleHitsSolid(ex, ez, ENEMY_R)) {
+    if (circleHitsSolid(eWorld, ex, ez, ENEMY_R, quest.gateOpen)) {
       ex = e.x;
       ez = e.z;
       evx = 0;
@@ -238,13 +321,13 @@ export function updateGame(dt: number): void {
     };
   });
 
-  // Separation so enemies don't stack.
+  // Separation so enemies don't stack (same world only).
   for (let i = 0; i < enemies.length; i++) {
     const a = enemies[i];
     if (a.dead) continue;
     for (let j = i + 1; j < enemies.length; j++) {
       const b = enemies[j];
-      if (b.dead) continue;
+      if (b.dead || b.world !== a.world) continue;
       const dx = b.x - a.x;
       const dz = b.z - a.z;
       const d = Math.hypot(dx, dz);
@@ -261,11 +344,12 @@ export function updateGame(dt: number): void {
   // Contact damage.
   for (let i = 0; i < enemies.length; i++) {
     const e = enemies[i];
-    if (e.dead || e.attackCd > 0 || invulnT > 0) continue;
+    if (e.dead || e.world !== worldId || e.attackCd > 0 || invulnT > 0) continue;
     const d = Math.hypot(e.x - x, e.z - z);
     if (d < TOUCH_RANGE) {
-      hp -= 1;
+      hp -= e.boss ? 2 : 1;
       invulnT = 1.0;
+      sfx.hurt();
       const dd = d || 1;
       vx += ((x - e.x) / dd) * 11;
       vz += ((z - e.z) / dd) * 11;
@@ -274,17 +358,35 @@ export function updateGame(dt: number): void {
   }
 
   if (hp <= 0) {
-    x = SPAWN.x;
-    z = SPAWN.z;
-    vx = 0;
-    vz = 0;
-    hp = p.maxHp;
-    invulnT = 2;
+    quest.phase = "dead";
+    hp = 0;
+  }
+
+  // ---- chest: victory ----
+  if (quest.phase === "playing" && worldId === "dungeon") {
+    const chestTiles = findTiles(wNow, "C");
+    if (chestTiles.length > 0) {
+      const cp = tileScenePos(wNow, chestTiles[0].tx, chestTiles[0].tz);
+      const d = Math.hypot(cp.x - x, cp.z - z);
+      if (d < 2.2) {
+        if (quest.chestUnlocked) {
+          quest.phase = "victory";
+          sfx.victory();
+        } else if (quest.hintCd <= 0) {
+          quest.hintCd = 4;
+          say("Sealed by dark magic... the boss must fall first.");
+        }
+      }
+    }
   }
 
   // ---- pickups ----
   const pickups: PickupState[] = [];
   for (const pk of [...st.pickups, ...newPickups]) {
+    if (pk.world !== worldId) {
+      pickups.push(pk);
+      continue;
+    }
     const t = pk.t + dt;
     if (t > 60) continue;
     let pvx = pk.vx;
@@ -295,8 +397,13 @@ export function updateGame(dt: number): void {
     const dz = z - pz;
     const d = Math.hypot(dx, dz);
     if (d < 0.9) {
-      if (pk.kind === "rupee") rupees += 1;
-      else hp = Math.min(p.maxHp, hp + 2);
+      if (pk.kind === "rupee") {
+        rupees += 1;
+        sfx.rupee();
+      } else {
+        hp = Math.min(p.maxHp, hp + 2);
+        sfx.heart();
+      }
       continue;
     }
     if (d < 3.5 && d > 0.01) {
@@ -318,18 +425,19 @@ export function updateGame(dt: number): void {
   }
 
   // ---- screen tracking ----
-  const sc = screenAt(x, z);
+  const sc = screenAtWorld(wNow, x, z);
   const screen =
     sc.x !== st.screen.x || sc.y !== st.screen.y ? sc : st.screen;
 
   useGameStore.setState({
-    player: { x, z, vx, vz, facing, hp, maxHp: p.maxHp, invulnT },
+    player: { world: worldId, x, z, vx, vz, facing, hp, maxHp: p.maxHp, invulnT },
     screen,
     swing,
     enemies,
     pickups,
     breakables,
     rupees,
+    quest,
     nextId,
   });
 }

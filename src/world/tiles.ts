@@ -1,33 +1,35 @@
 /**
- * Stage 2 — world data model. Stage 3 adds spawn/breakable data.
+ * Stage 4 — two worlds: the overworld and a small dungeon.
  *
- * The overworld is a 3x2 grid of screens, each 16x12 tiles, each tile
- * 2 world units. Screens are authored as ASCII maps:
+ * Each world is a grid of screens authored as ASCII maps. Tile legend:
  *
- *   .  grass      (walkable)
- *   ,  path       (walkable, visual only)
- *   *  flowers    (walkable, visual only)
- *   =  bridge     (walkable, renders planks over water)
- *   ~  water      (solid)
- *   #  hedge      (solid)
- *   T  tree       (solid)
- *   R  rock       (solid)
- *   E  enemy spawn (walkable, renders as grass)
- *   P  pot        (walkable, renders a smashable pot)
+ *   .  grass/stone floor (walkable)
+ *   ,  path             (walkable, visual only)
+ *   *  flowers          (walkable, visual only)
+ *   =  bridge          (walkable, renders planks over water)
+ *   ~  water           (solid)
+ *   #  hedge           (solid)
+ *   T  tree            (solid)
+ *   R  rock            (solid)
+ *   E  enemy spawn     (walkable, renders as floor)
+ *   P  pot             (walkable, smashable)
+ *   W  stone wall      (solid, dungeon)
+ *   o  torch           (walkable decor, dungeon)
+ *   D  doorway         (walkable, teleports between worlds)
+ *   G  gate            (solid until opened with the key)
+ *   K  key pedestal    (walkable, grants the dungeon key)
+ *   C  chest           (solid, victory when opened)
+ *   B  boss spawn      (walkable, renders as floor)
  *
- * World coordinates: x in [0, 96), z in [0, 48).
- * Screen (sx, sz) covers x in [sx*32, sx*32+32), z in [sz*24, sz*24+24).
+ * The dungeon lives at a scene offset so both worlds can share one
+ * Babylon scene — the camera only ever shows the player's world.
  */
 
 export const TILE_SIZE = 2;
 export const SCREEN_COLS = 16;
 export const SCREEN_ROWS = 12;
-export const SCREEN_PX = SCREEN_COLS * TILE_SIZE; // 32
-export const SCREEN_PZ = SCREEN_ROWS * TILE_SIZE; // 24
-export const WORLD_SX = 3;
-export const WORLD_SZ = 2;
-export const WORLD_W = WORLD_SX * SCREEN_PX; // 96
-export const WORLD_H = WORLD_SZ * SCREEN_PZ; // 48
+
+export type WorldId = "overworld" | "dungeon";
 
 export type Tile =
   | "."
@@ -39,7 +41,29 @@ export type Tile =
   | "T"
   | "R"
   | "E"
-  | "P";
+  | "P"
+  | "W"
+  | "o"
+  | "D"
+  | "G"
+  | "K"
+  | "C"
+  | "B";
+
+export interface WorldDef {
+  id: WorldId;
+  /** Screens across / down. */
+  sx: number;
+  sz: number;
+  /** Scene-space offset of the world's origin. */
+  originX: number;
+  originZ: number;
+  screens: string[][][];
+  names: string[][];
+  theme: "grass" | "stone";
+}
+
+// ---------------------------------------------------------------- overworld
 
 const SCREEN_A = [
   "................",
@@ -124,94 +148,232 @@ const SCREEN_F = [
   "..TT....E.......",
   ",,..........TT..",
   ",,..........TT..",
-  "................",
+  ".............D..",
   "......RR........",
   "......RR........",
   "..........E.....",
   "................",
 ];
 
-/** SCREENS[sy][sx] -> 12 rows of 16 chars. */
-const SCREENS: string[][][] = [
-  [SCREEN_A, SCREEN_B, SCREEN_C],
-  [SCREEN_D, SCREEN_E, SCREEN_F],
+export const OVERWORLD: WorldDef = {
+  id: "overworld",
+  sx: 3,
+  sz: 2,
+  originX: 0,
+  originZ: 0,
+  screens: [
+    [SCREEN_A, SCREEN_B, SCREEN_C],
+    [SCREEN_D, SCREEN_E, SCREEN_F],
+  ],
+  names: [
+    ["Home", "Pond", "Hedgefield"],
+    ["Forest", "Meadow", "Rocks"],
+  ],
+  theme: "grass",
+};
+
+// ------------------------------------------------------------------ dungeon
+
+const DUNGEON_0 = [
+  "WWWWWWWWWWWWWWWW",
+  "W..............W",
+  "W.PP...........W",
+  "W.PP.....E.....W",
+  "W..........E...W",
+  "W..K..........GG",
+  "W......E......GG",
+  "W..............W",
+  "W..o........o..W",
+  "W..............W",
+  "W.....D........W",
+  "WWWWWWWWWWWWWWWW",
 ];
 
-export const SCREEN_NAMES = [
-  ["Home", "Pond", "Hedgefield"],
-  ["Forest", "Meadow", "Rocks"],
+const DUNGEON_1 = [
+  "WWWWWWWWWWWWWWWW",
+  "W..............W",
+  "W..o........o..W",
+  "W..............W",
+  "W......B.......W",
+  "...............W",
+  "...............W",
+  "W..............W",
+  "W......C.......W",
+  "W..............W",
+  "W..............W",
+  "WWWWWWWWWWWWWWWW",
 ];
+
+export const DUNGEON: WorldDef = {
+  id: "dungeon",
+  sx: 2,
+  sz: 1,
+  originX: 200,
+  originZ: 0,
+  screens: [[DUNGEON_0, DUNGEON_1]],
+  names: [["Entry", "Boss Room"]],
+  theme: "stone",
+};
+
+export const WORLDS: WorldDef[] = [OVERWORLD, DUNGEON];
 
 // Fail fast on a malformed map (miscounted row, missing screen).
-for (let sz = 0; sz < WORLD_SZ; sz++) {
-  for (let sx = 0; sx < WORLD_SX; sx++) {
-    const rows = SCREENS[sz][sx];
-    if (rows.length !== SCREEN_ROWS) {
-      throw new Error(
-        `screen (${sx},${sz}): expected ${SCREEN_ROWS} rows, got ${rows.length}`,
-      );
-    }
-    rows.forEach((row, i) => {
-      if (row.length !== SCREEN_COLS) {
+for (const w of WORLDS) {
+  for (let sz = 0; sz < w.sz; sz++) {
+    for (let sx = 0; sx < w.sx; sx++) {
+      const rows = w.screens[sz][sx];
+      if (rows.length !== SCREEN_ROWS) {
         throw new Error(
-          `screen (${sx},${sz}) row ${i}: expected ${SCREEN_COLS} chars, got ${row.length}`,
+          `${w.id} screen (${sx},${sz}): expected ${SCREEN_ROWS} rows, got ${rows.length}`,
         );
       }
-    });
+      rows.forEach((row, i) => {
+        if (row.length !== SCREEN_COLS) {
+          throw new Error(
+            `${w.id} screen (${sx},${sz}) row ${i}: expected ${SCREEN_COLS} chars, got ${row.length}`,
+          );
+        }
+      });
+    }
   }
 }
 
-/** Tile at tile coords (tx, tz). Null outside the world (treated as solid). */
-export function tileAt(tx: number, tz: number): Tile | null {
-  const maxTx = WORLD_SX * SCREEN_COLS;
-  const maxTz = WORLD_SZ * SCREEN_ROWS;
+export function screenPx(w: WorldDef): number {
+  return SCREEN_COLS * TILE_SIZE;
+}
+export function screenPz(w: WorldDef): number {
+  return SCREEN_ROWS * TILE_SIZE;
+}
+
+/** Tile at tile coords local to the world. Null outside the world. */
+export function tileAtWorld(w: WorldDef, tx: number, tz: number): Tile | null {
+  const maxTx = w.sx * SCREEN_COLS;
+  const maxTz = w.sz * SCREEN_ROWS;
   if (tx < 0 || tz < 0 || tx >= maxTx || tz >= maxTz) return null;
   const sx = Math.floor(tx / SCREEN_COLS);
   const sz = Math.floor(tz / SCREEN_ROWS);
   const lx = tx - sx * SCREEN_COLS;
   const lz = tz - sz * SCREEN_ROWS;
-  return SCREENS[sz][sx][lz][lx] as Tile;
+  return w.screens[sz][sx][lz][lx] as Tile;
 }
 
-export function isSolid(t: Tile): boolean {
-  return t === "~" || t === "#" || t === "T" || t === "R";
+export function isSolid(t: Tile, gateOpen: boolean): boolean {
+  if (t === "G") return !gateOpen;
+  return t === "~" || t === "#" || t === "T" || t === "R" || t === "W" || t === "C";
 }
 
-/** Circle-vs-tilemap collision. Null tiles (outside world) count as solid. */
-export function circleHitsSolid(x: number, z: number, r: number): boolean {
-  const x0 = Math.floor((x - r) / TILE_SIZE);
-  const x1 = Math.floor((x + r) / TILE_SIZE);
-  const z0 = Math.floor((z - r) / TILE_SIZE);
-  const z1 = Math.floor((z + r) / TILE_SIZE);
+/** Circle-vs-tilemap collision in scene space. */
+export function circleHitsSolid(
+  w: WorldDef,
+  x: number,
+  z: number,
+  r: number,
+  gateOpen: boolean,
+): boolean {
+  const x0 = Math.floor((x - w.originX - r) / TILE_SIZE);
+  const x1 = Math.floor((x - w.originX + r) / TILE_SIZE);
+  const z0 = Math.floor((z - w.originZ - r) / TILE_SIZE);
+  const z1 = Math.floor((z - w.originZ + r) / TILE_SIZE);
   for (let tx = x0; tx <= x1; tx++) {
     for (let tz = z0; tz <= z1; tz++) {
-      const t = tileAt(tx, tz);
-      if (t === null || isSolid(t)) return true;
+      const t = tileAtWorld(w, tx, tz);
+      if (t === null || isSolid(t, gateOpen)) return true;
     }
   }
   return false;
 }
 
-/** Screen coords containing a world position. */
-export function screenAt(x: number, z: number): { x: number; y: number } {
+/** True if the circle overlaps any tile of the given kind. */
+export function touchesTile(
+  w: WorldDef,
+  x: number,
+  z: number,
+  r: number,
+  kind: Tile,
+): boolean {
+  const x0 = Math.floor((x - w.originX - r) / TILE_SIZE);
+  const x1 = Math.floor((x - w.originX + r) / TILE_SIZE);
+  const z0 = Math.floor((z - w.originZ - r) / TILE_SIZE);
+  const z1 = Math.floor((z - w.originZ + r) / TILE_SIZE);
+  for (let tx = x0; tx <= x1; tx++) {
+    for (let tz = z0; tz <= z1; tz++) {
+      if (tileAtWorld(w, tx, tz) === kind) return true;
+    }
+  }
+  return false;
+}
+
+/** Scene-space center of a tile. */
+export function tileScenePos(
+  w: WorldDef,
+  tx: number,
+  tz: number,
+): { x: number; z: number } {
   return {
-    x: Math.max(0, Math.min(WORLD_SX - 1, Math.floor(x / SCREEN_PX))),
-    y: Math.max(0, Math.min(WORLD_SZ - 1, Math.floor(z / SCREEN_PZ))),
+    x: w.originX + tx * TILE_SIZE + TILE_SIZE / 2,
+    z: w.originZ + tz * TILE_SIZE + TILE_SIZE / 2,
   };
 }
 
-/** Spawn: screen A, tile (8, 6) — on the path, clear of trees. */
+/** All tiles of a kind, in tile coords local to the world. */
+export function findTiles(
+  w: WorldDef,
+  kind: Tile,
+): Array<{ tx: number; tz: number }> {
+  const out: Array<{ tx: number; tz: number }> = [];
+  for (let tx = 0; tx < w.sx * SCREEN_COLS; tx++) {
+    for (let tz = 0; tz < w.sz * SCREEN_ROWS; tz++) {
+      if (tileAtWorld(w, tx, tz) === kind) out.push({ tx, tz });
+    }
+  }
+  return out;
+}
+
+/** Screen coords (local to world) containing a scene-space position. */
+export function screenAtWorld(
+  w: WorldDef,
+  x: number,
+  z: number,
+): { x: number; y: number } {
+  return {
+    x: Math.max(
+      0,
+      Math.min(w.sx - 1, Math.floor((x - w.originX) / screenPx(w))),
+    ),
+    y: Math.max(
+      0,
+      Math.min(w.sz - 1, Math.floor((z - w.originZ) / screenPz(w))),
+    ),
+  };
+}
+
+export function worldById(id: WorldId): WorldDef {
+  return id === "dungeon" ? DUNGEON : OVERWORLD;
+}
+
+/** Spawn: overworld screen A, tile (8, 6) — on the path, clear of trees. */
 export const SPAWN = { x: 8 * TILE_SIZE + 1, z: 6 * TILE_SIZE + 1 };
 
-/** World-space center of every 'E' tile. */
-export function enemySpawns(): Array<{ x: number; z: number }> {
-  const out: Array<{ x: number; z: number }> = [];
-  const maxTx = WORLD_SX * SCREEN_COLS;
-  const maxTz = WORLD_SZ * SCREEN_ROWS;
-  for (let tx = 0; tx < maxTx; tx++) {
-    for (let tz = 0; tz < maxTz; tz++) {
-      if (tileAt(tx, tz) === "E") {
-        out.push({ x: tx * TILE_SIZE + TILE_SIZE / 2, z: tz * TILE_SIZE + TILE_SIZE / 2 });
+/** Where the overworld doorway leads (dungeon local tile 6,8). */
+export const DUNGEON_SPAWN = tileScenePos(DUNGEON, 6, 8);
+/** Where the dungeon doorway leads (overworld, south of the door). */
+export const OVERWORLD_RETURN = tileScenePos(OVERWORLD, 45, 21);
+
+export interface EnemySpawn {
+  x: number;
+  z: number;
+  boss: boolean;
+}
+
+/** Enemy spawns for a world, in scene space. */
+export function enemySpawns(w: WorldDef): EnemySpawn[] {
+  const out: EnemySpawn[] = [];
+  for (let tx = 0; tx < w.sx * SCREEN_COLS; tx++) {
+    for (let tz = 0; tz < w.sz * SCREEN_ROWS; tz++) {
+      const t = tileAtWorld(w, tx, tz);
+      if (t === "E" || t === "B") {
+        const p = tileScenePos(w, tx, tz);
+        out.push({ x: p.x, z: p.z, boss: t === "B" });
       }
     }
   }
@@ -239,39 +401,35 @@ function mulberry32(seed: number): () => number {
 
 /**
  * Pots come from 'P' map tiles; grass tufts are scattered on grass tiles
- * (22 per screen max, seeded). Called once at startup.
+ * in the overworld (22 per screen max, seeded). Called once at startup.
  */
-export function createBreakables(): BreakableDef[] {
+export function createBreakables(w: WorldDef): BreakableDef[] {
   const out: BreakableDef[] = [];
-  let id = 101;
-  const maxTx = WORLD_SX * SCREEN_COLS;
-  const maxTz = WORLD_SZ * SCREEN_ROWS;
+  let id = w.id === "dungeon" ? 2001 : 101;
+  const maxTx = w.sx * SCREEN_COLS;
+  const maxTz = w.sz * SCREEN_ROWS;
   for (let tx = 0; tx < maxTx; tx++) {
     for (let tz = 0; tz < maxTz; tz++) {
-      if (tileAt(tx, tz) === "P") {
-        out.push({
-          id: id++,
-          kind: "pot",
-          x: tx * TILE_SIZE + TILE_SIZE / 2,
-          z: tz * TILE_SIZE + TILE_SIZE / 2,
-        });
+      if (tileAtWorld(w, tx, tz) === "P") {
+        const p = tileScenePos(w, tx, tz);
+        out.push({ id: id++, kind: "pot", x: p.x, z: p.z });
       }
     }
   }
-  const rng = mulberry32(1337);
-  for (let sx = 0; sx < WORLD_SX; sx++) {
-    for (let sz = 0; sz < WORLD_SZ; sz++) {
-      let placed = 0;
-      for (let tries = 0; tries < 60 && placed < 22; tries++) {
-        const tx = sx * SCREEN_COLS + Math.floor(rng() * SCREEN_COLS);
-        const tz = sz * SCREEN_ROWS + Math.floor(rng() * SCREEN_ROWS);
-        if (tileAt(tx, tz) !== ".") continue;
-        // Keep the spawn tile clear.
-        const wx = tx * TILE_SIZE + TILE_SIZE / 2;
-        const wz = tz * TILE_SIZE + TILE_SIZE / 2;
-        if (Math.hypot(wx - SPAWN.x, wz - SPAWN.z) < 3) continue;
-        out.push({ id: id++, kind: "grass", x: wx, z: wz });
-        placed++;
+  if (w.id === "overworld") {
+    const rng = mulberry32(1337);
+    for (let sx = 0; sx < w.sx; sx++) {
+      for (let sz = 0; sz < w.sz; sz++) {
+        let placed = 0;
+        for (let tries = 0; tries < 60 && placed < 22; tries++) {
+          const tx = sx * SCREEN_COLS + Math.floor(rng() * SCREEN_COLS);
+          const tz = sz * SCREEN_ROWS + Math.floor(rng() * SCREEN_ROWS);
+          if (tileAtWorld(w, tx, tz) !== ".") continue;
+          const p = tileScenePos(w, tx, tz);
+          if (Math.hypot(p.x - SPAWN.x, p.z - SPAWN.z) < 3) continue;
+          out.push({ id: id++, kind: "grass", x: p.x, z: p.z });
+          placed++;
+        }
       }
     }
   }

@@ -17,12 +17,14 @@ import { buildWorld } from "../world/buildWorld";
 import { buildBreakableMeshes, createActorSync } from "./actors";
 import { disposeInput, initInput, queueAttack } from "./input";
 import { updateGame } from "./simulation";
+import { SPAWN, WORLDS } from "../world/tiles";
 
 /**
- * Stage 3 — engine boots the world, actors, and the full simulation.
+ * Stage 4 — the full game.
  *
- * Per frame: input -> simulation (store) -> actor mesh sync -> render.
- * The simulation owns all game state; Babylon only mirrors it.
+ * Both worlds share one scene (the dungeon sits at a scene offset).
+ * Per frame: simulate (playing only) -> sync actor meshes -> render.
+ * Title screen gets a slow orbital camera over the spawn.
  */
 
 export interface ZeldoEngine {
@@ -66,8 +68,8 @@ export function createZeldoEngine(canvas: HTMLCanvasElement): ZeldoEngine {
   shadowGen.useBlurExponentialShadowMap = true;
   shadowGen.setDarkness(0.3);
 
-  // --- World + actors ---
-  const worldRoot = buildWorld(scene, shadowGen);
+  // --- Worlds + actors ---
+  const worldRoots = WORLDS.map((w) => buildWorld(scene, shadowGen, w));
   const actorSync = createActorSync(scene, shadowGen);
   const breakableMeshes = buildBreakableMeshes(
     scene,
@@ -107,7 +109,9 @@ export function createZeldoEngine(canvas: HTMLCanvasElement): ZeldoEngine {
 
   initInput();
   const onCanvasDown = (e: MouseEvent) => {
-    if (e.button === 0) queueAttack();
+    if (e.button === 0 && useGameStore.getState().quest.phase === "playing") {
+      queueAttack();
+    }
   };
   canvas.addEventListener("mousedown", onCanvasDown);
 
@@ -115,10 +119,11 @@ export function createZeldoEngine(canvas: HTMLCanvasElement): ZeldoEngine {
   const camTarget = new Vector3();
   scene.onBeforeRenderObservable.add(() => {
     const dt = Math.min(engine.getDeltaTime() / 1000, 0.05);
-    updateGame(dt);
+    const before = useGameStore.getState();
+    if (before.quest.phase === "playing") updateGame(dt);
     actorSync.sync(dt);
 
-    const { player, breakables } = useGameStore.getState();
+    const { player, breakables, quest } = useGameStore.getState();
     for (const b of breakables) {
       const m = breakableMeshes.get(b.id);
       if (m) m.setEnabled(b.alive);
@@ -132,8 +137,19 @@ export function createZeldoEngine(canvas: HTMLCanvasElement): ZeldoEngine {
       player.invulnT > 0 && Math.floor(performance.now() / 90) % 2 === 0;
     heroRoot.setEnabled(!blink);
 
-    camera.position.set(player.x, CAM_HEIGHT, player.z + CAM_BACK);
-    camTarget.set(player.x, 0, player.z);
+    if (quest.phase === "title") {
+      // Slow orbital establishing shot over the spawn.
+      const t = performance.now() / 1000;
+      camera.position.set(
+        SPAWN.x + Math.cos(t * 0.25) * 20,
+        15,
+        SPAWN.z + Math.sin(t * 0.25) * 20,
+      );
+      camTarget.set(SPAWN.x, 0, SPAWN.z);
+    } else {
+      camera.position.set(player.x, CAM_HEIGHT, player.z + CAM_BACK);
+      camTarget.set(player.x, 0, player.z);
+    }
     camera.setTarget(camTarget);
   });
 
@@ -151,7 +167,7 @@ export function createZeldoEngine(canvas: HTMLCanvasElement): ZeldoEngine {
       disposeInput();
       actorSync.dispose();
       for (const [, m] of breakableMeshes) m.dispose();
-      worldRoot.dispose();
+      for (const r of worldRoots) r.dispose();
       scene.dispose();
       engine.dispose();
     },

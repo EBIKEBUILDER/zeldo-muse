@@ -1,6 +1,10 @@
 import { create } from "zustand";
+import { clearAttack } from "../game/input";
 import {
+  DUNGEON,
+  OVERWORLD,
   SPAWN,
+  WorldId,
   createBreakables,
   enemySpawns,
 } from "../world/tiles";
@@ -16,11 +20,14 @@ import {
  *  - Hot lane (positions, velocities, swing, enemies, pickups): read
  *    directly in the render loop via getState(). Never subscribe a React
  *    component to these at 60fps.
- *  - UI lane (hp, rupees, screen): React subscribes with selectors; these
- *    change rarely, so re-renders stay cheap.
+ *  - UI lane (hp, rupees, screen, quest, phase): React subscribes with
+ *    selectors; these change rarely, so re-renders stay cheap.
  */
 
+export type Phase = "title" | "playing" | "dead" | "victory";
+
 export interface PlayerState {
+  world: WorldId;
   x: number;
   z: number;
   vx: number;
@@ -51,6 +58,8 @@ export interface SwingState {
 
 export interface EnemyState {
   id: number;
+  world: WorldId;
+  boss: boolean;
   x: number;
   z: number;
   vx: number;
@@ -73,6 +82,7 @@ export interface EnemyState {
 
 export interface PickupState {
   id: number;
+  world: WorldId;
   kind: "rupee" | "heart";
   x: number;
   z: number;
@@ -84,10 +94,27 @@ export interface PickupState {
 
 export interface BreakableState {
   id: number;
+  world: WorldId;
   kind: "grass" | "pot";
   x: number;
   z: number;
   alive: boolean;
+}
+
+export interface QuestState {
+  hasKey: boolean;
+  gateOpen: boolean;
+  chestUnlocked: boolean;
+  /** Doorway teleport debounce. */
+  doorCd: number;
+  /** Throttle for hint toasts (locked gate / sealed chest). */
+  hintCd: number;
+  /** Seconds of play time (for the victory screen). */
+  playTime: number;
+  phase: Phase;
+  /** Toast message + seconds remaining. */
+  message: string;
+  messageT: number;
 }
 
 interface GameState {
@@ -98,41 +125,64 @@ interface GameState {
   pickups: PickupState[];
   breakables: BreakableState[];
   rupees: number;
+  quest: QuestState;
   /** Next id for spawned pickups. */
   nextId: number;
   setPlayerPosition: (x: number, z: number) => void;
   setPlayerFacing: (facing: number) => void;
-  reset: () => void;
+  /** Full reset + begin playing (used by title / retry). */
+  startGame: () => void;
 }
 
 function initialEnemies(): EnemyState[] {
-  return enemySpawns().map((s, i) => ({
-    id: i + 1,
-    x: s.x,
-    z: s.z,
-    vx: 0,
-    vz: 0,
-    hp: 2,
-    maxHp: 2,
-    hurtT: 0,
-    attackCd: 0,
-    dead: false,
-    deadT: 0,
-    spawnX: s.x,
-    spawnZ: s.z,
-    wx: s.x,
-    wz: s.z,
-    wanderT: 0,
-  }));
+  const out: EnemyState[] = [];
+  let id = 1;
+  for (const w of [OVERWORLD, DUNGEON]) {
+    for (const s of enemySpawns(w)) {
+      out.push({
+        id: id++,
+        world: w.id,
+        boss: s.boss,
+        x: s.x,
+        z: s.z,
+        vx: 0,
+        vz: 0,
+        hp: s.boss ? 8 : 2,
+        maxHp: s.boss ? 8 : 2,
+        hurtT: 0,
+        attackCd: 0,
+        dead: false,
+        deadT: 0,
+        spawnX: s.x,
+        spawnZ: s.z,
+        wx: s.x,
+        wz: s.z,
+        wanderT: 0,
+      });
+    }
+  }
+  return out;
 }
 
 function initialBreakables(): BreakableState[] {
-  return createBreakables().map((b) => ({ ...b, alive: true }));
+  return [
+    ...createBreakables(OVERWORLD).map((b) => ({
+      ...b,
+      world: OVERWORLD.id as WorldId,
+      alive: true,
+    })),
+    ...createBreakables(DUNGEON).map((b) => ({
+      ...b,
+      world: DUNGEON.id as WorldId,
+      alive: true,
+    })),
+  ];
 }
 
 function initialState() {
   return {
     player: {
+      world: "overworld" as WorldId,
       x: SPAWN.x,
       z: SPAWN.z,
       vx: 0,
@@ -148,6 +198,17 @@ function initialState() {
     pickups: [] as PickupState[],
     breakables: initialBreakables(),
     rupees: 0,
+    quest: {
+      hasKey: false,
+      gateOpen: false,
+      chestUnlocked: false,
+      doorCd: 0,
+      hintCd: 0,
+      playTime: 0,
+      phase: "title" as Phase,
+      message: "",
+      messageT: 0,
+    } as QuestState,
     nextId: 1001,
   };
 }
@@ -161,5 +222,10 @@ export const useGameStore = create<GameState>()((set) => ({
   setPlayerFacing: (facing) =>
     set((s) => ({ player: { ...s.player, facing } })),
 
-  reset: () => set(initialState()),
+  startGame: () => {
+    clearAttack();
+    const fresh = initialState();
+    fresh.quest.phase = "playing";
+    set(fresh);
+  },
 }));

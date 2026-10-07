@@ -1,7 +1,8 @@
 /**
- * Stage 2 — keyboard input. WASD + arrow keys.
- * Real input mapping (gamepad, remapping UI) arrives in stage 3.
+ * Stage 4 — keyboard input. WASD + arrows to move, Space/J/click to swing,
+ * M to mute. Real input mapping (gamepad, remapping UI) is future work.
  */
+import { toggleMute } from "./audio";
 
 const down = new Set<string>();
 let initialized = false;
@@ -19,6 +20,11 @@ export function queueAttack(): void {
   attackQueued = true;
 }
 
+/** Drain a stale queued attack (e.g. on game start). */
+export function clearAttack(): void {
+  attackQueued = false;
+}
+
 function onKeyDown(e: KeyboardEvent): void {
   if (
     e.code === "ArrowUp" ||
@@ -31,6 +37,9 @@ function onKeyDown(e: KeyboardEvent): void {
   }
   if ((e.code === "Space" || e.code === "KeyJ") && !e.repeat) {
     attackQueued = true;
+  }
+  if (e.code === "KeyM" && !e.repeat) {
+    toggleMute();
   }
   down.add(e.code);
 }

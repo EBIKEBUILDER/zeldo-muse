@@ -7,10 +7,14 @@ import {
   TransformNode,
 } from "@babylonjs/core";
 import { makeFlatMaterial } from "./materials";
-import { BreakableState, useGameStore } from "../store/gameStore";
+import {
+  BreakableState,
+  useGameStore,
+} from "../store/gameStore";
+import { DUNGEON, findTiles, tileScenePos } from "../world/tiles";
 
 /**
- * Stage 3 — Babylon meshes for the simulated actors.
+ * Stage 4 — Babylon meshes for the simulated actors.
  * The simulation owns the state; this module only mirrors it into meshes.
  */
 
@@ -42,6 +46,68 @@ export function createActorSync(scene: Scene, shadowGen: ShadowGenerator) {
   swordPivot.setEnabled(false);
   shadowGen.addShadowCaster(blade);
 
+  // --- Interactive quest pieces (gates, key pedestal, chest) ---
+  const gateMeshes: TransformNode[] = [];
+  const ironM = makeFlatMaterial(scene, "ironMat", new Color3(0.22, 0.22, 0.28));
+  for (const { tx, tz } of findTiles(DUNGEON, "G")) {
+    const { x, z } = tileScenePos(DUNGEON, tx, tz);
+    const gate = new TransformNode(`gate-${tx}-${tz}`, scene);
+    const bars = MeshBuilder.CreateBox(`gatebars-${tx}-${tz}`, { width: 1.9, height: 2.0, depth: 0.35 }, scene);
+    bars.position.set(0, 1.0, 0);
+    bars.material = ironM;
+    bars.parent = gate;
+    const top = MeshBuilder.CreateBox(`gatetop-${tx}-${tz}`, { width: 1.9, height: 0.25, depth: 0.5 }, scene);
+    top.position.set(0, 2.1, 0);
+    top.material = ironM;
+    top.parent = gate;
+    gate.position.set(x, 0, z);
+    shadowGen.addShadowCaster(bars);
+    gateMeshes.push(gate);
+  }
+
+  const keyTiles = findTiles(DUNGEON, "K");
+  const keyAnchor =
+    keyTiles.length > 0 ? tileScenePos(DUNGEON, keyTiles[0].tx, keyTiles[0].tz) : null;
+  let keyFloat: TransformNode | null = null;
+  if (keyAnchor) {
+    const ped = MeshBuilder.CreateCylinder(
+      "keypedestal",
+      { diameterTop: 0.9, diameterBottom: 1.1, height: 1.0, tessellation: 8 },
+      scene,
+    );
+    ped.position.set(keyAnchor.x, 0.5, keyAnchor.z);
+    ped.material = makeFlatMaterial(scene, "pedMat", new Color3(0.5, 0.5, 0.55));
+    shadowGen.addShadowCaster(ped);
+    keyFloat = new TransformNode("keyfloat", scene);
+    const keyMesh = MeshBuilder.CreateIcoSphere("keymesh", { radius: 0.3, subdivisions: 0 }, scene);
+    const goldM = makeFlatMaterial(scene, "goldMat", new Color3(1, 0.8, 0.2));
+    goldM.emissiveColor = new Color3(0.5, 0.35, 0.05);
+    keyMesh.material = goldM;
+    keyMesh.scaling.y = 1.6;
+    keyMesh.parent = keyFloat;
+    keyFloat.position.set(keyAnchor.x, 1.6, keyAnchor.z);
+  }
+
+  const chestTiles = findTiles(DUNGEON, "C");
+  const chestAnchor =
+    chestTiles.length > 0 ? tileScenePos(DUNGEON, chestTiles[0].tx, chestTiles[0].tz) : null;
+  let chestLid: TransformNode | null = null;
+  if (chestAnchor) {
+    const base = MeshBuilder.CreateBox("chestbase", { width: 1.6, height: 0.8, depth: 1.1 }, scene);
+    base.position.set(chestAnchor.x, 0.4, chestAnchor.z);
+    base.material = makeFlatMaterial(scene, "chestMat", new Color3(0.45, 0.3, 0.15));
+    shadowGen.addShadowCaster(base);
+    const goldTrim = makeFlatMaterial(scene, "chestGold", new Color3(0.85, 0.65, 0.2));
+    goldTrim.emissiveColor = new Color3(0.25, 0.18, 0.03);
+    chestLid = new TransformNode("chestlid", scene);
+    const lid = MeshBuilder.CreateBox("chestlidmesh", { width: 1.6, height: 0.3, depth: 1.1 }, scene);
+    lid.position.set(0, 0.15, -0.55);
+    lid.material = goldTrim;
+    lid.parent = chestLid;
+    // Hinge at the back (+z) edge of the chest.
+    chestLid.position.set(chestAnchor.x, 0.85, chestAnchor.z + 0.55);
+  }
+
   const rupeeMat = makeFlatMaterial(scene, "rupeeMat", new Color3(0.2, 0.85, 0.3));
   rupeeMat.emissiveColor = new Color3(0.1, 0.4, 0.15);
   const heartMat = makeFlatMaterial(scene, "heartMat", new Color3(0.9, 0.2, 0.25));
@@ -65,17 +131,18 @@ export function createActorSync(scene: Scene, shadowGen: ShadowGenerator) {
       let rec = enemyMeshes.get(e.id);
       if (!rec) {
         const root = new TransformNode(`enemy-${e.id}`, scene);
+        const r = e.boss ? 0.95 : 0.55;
         const body = MeshBuilder.CreateIcoSphere(
           `ebody-${e.id}`,
-          { radius: 0.55, subdivisions: 1 },
+          { radius: r, subdivisions: 1 },
           scene,
         );
-        body.position.y = 0.5;
+        body.position.y = r * 0.9;
         body.scaling.y = 0.85;
         const bodyMat = makeFlatMaterial(
           scene,
           `ebodyMat-${e.id}`,
-          new Color3(0.75, 0.25, 0.22),
+          e.boss ? new Color3(0.55, 0.12, 0.35) : new Color3(0.75, 0.25, 0.22),
         );
         body.material = bodyMat;
         body.parent = root;
@@ -84,13 +151,14 @@ export function createActorSync(scene: Scene, shadowGen: ShadowGenerator) {
           `eeyeMat-${e.id}`,
           new Color3(1, 1, 1),
         );
-        for (const sx of [-0.2, 0.2]) {
+        const eyeOff = r * 0.36;
+        for (const sx of [-eyeOff, eyeOff]) {
           const eye = MeshBuilder.CreateSphere(
             `eeye-${e.id}-${sx}`,
-            { diameter: 0.16, segments: 6 },
+            { diameter: r * 0.3, segments: 6 },
             scene,
           );
-          eye.position.set(sx, 0.62, -0.42);
+          eye.position.set(sx, r * 1.05, -r * 0.72);
           eye.material = eyeMat;
           eye.parent = root;
         }
@@ -166,16 +234,32 @@ export function createActorSync(scene: Scene, shadowGen: ShadowGenerator) {
     swordPivot.rotation.y = player.facing - 1.25 + ease * 2.5;
   }
 
+  function syncQuest() {
+    const { quest } = useGameStore.getState();
+    for (const g of gateMeshes) g.setEnabled(!quest.gateOpen);
+    if (keyFloat) {
+      keyFloat.setEnabled(!quest.hasKey);
+      keyFloat.rotation.y = clock * 1.5;
+      keyFloat.position.y = 1.6 + Math.sin(clock * 2.5) * 0.15;
+    }
+    if (chestLid) {
+      const target = quest.chestUnlocked ? -1.9 : 0;
+      chestLid.rotation.x += (target - chestLid.rotation.x) * 0.15;
+    }
+  }
+
   return {
     sync(dt: number) {
       clock += dt;
       syncEnemies();
       syncPickups();
       syncSword();
+      syncQuest();
     },
     dispose() {
       for (const [, r] of enemyMeshes) r.root.dispose();
       for (const [, r] of pickupMeshes) r.dispose();
+      for (const g of gateMeshes) g.dispose();
       swordPivot.dispose();
       enemyMeshes.clear();
       pickupMeshes.clear();
