@@ -138,7 +138,10 @@ export function updateGame(dt: number): void {
 
   let facing = p.facing;
   if (dir.x !== 0 || dir.z !== 0) {
-    facing = Math.round(Math.atan2(dir.x, -dir.z) / (Math.PI / 4)) * (Math.PI / 4);
+    // Facing = the rotation.y the visuals use. Local -z (the visual front)
+    // maps to world (-sin θ, -cos θ), so facing a world direction needs
+    // atan2(-dx, -dz). (The x negates because +x renders as screen-left.)
+    facing = Math.round(Math.atan2(-dir.x, -dir.z) / (Math.PI / 4)) * (Math.PI / 4);
   }
 
   // ---- doorways ----
@@ -202,7 +205,7 @@ export function updateGame(dt: number): void {
       const dz = e.z - z;
       const d = Math.hypot(dx, dz);
       if (d > SWING_RANGE + ENEMY_R) return e;
-      if (angDiff(Math.atan2(dx, -dz), facing) > SWING_ARC) return e;
+      if (angDiff(Math.atan2(-dx, -dz), facing) > SWING_ARC) return e;
       hitSomething = true;
       const hp = e.hp - 1;
       const nx = d > 0.01 ? dx / d : 0;
@@ -232,7 +235,7 @@ export function updateGame(dt: number): void {
       const dz = b.z - z;
       const d = Math.hypot(dx, dz);
       if (d > SWING_RANGE) return b;
-      if (angDiff(Math.atan2(dx, -dz), facing) > SWING_ARC) return b;
+      if (angDiff(Math.atan2(-dx, -dz), facing) > SWING_ARC) return b;
       hitSomething = true;
       emitSpark({ x: b.x, z: b.z, kind: b.kind === "grass" ? "grass" : "pot" });
       if (b.kind === "grass") {

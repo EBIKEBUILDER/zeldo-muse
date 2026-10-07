@@ -243,7 +243,7 @@ export function createActorSync(scene: Scene, shadowGen: ShadowGenerator) {
       }
       rec.root.position.set(e.x, 0, e.z);
       const sp = Math.hypot(e.vx, e.vz);
-      if (sp > 0.5) rec.root.rotation.y = Math.atan2(e.vx, -e.vz);
+      if (sp > 0.5) rec.root.rotation.y = Math.atan2(-e.vx, -e.vz);
       const pop = 1 + Math.max(0, e.hurtT) * 1.5;
       const shrink = e.dead ? Math.max(0.01, 1 - e.deadT / 0.25) : 1;
       rec.root.scaling.set(pop * shrink, pop * shrink, pop * shrink);
