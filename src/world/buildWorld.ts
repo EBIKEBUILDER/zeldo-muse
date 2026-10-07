@@ -45,7 +45,7 @@ export function buildWorld(
   const wallM = makeFlatMaterial(scene, `wallMat-${w.id}`, new Color3(0.35, 0.34, 0.38));
   const trunkM = makeFlatMaterial(scene, `trunkMat-${w.id}`, new Color3(0.42, 0.28, 0.16));
   const leafM = makeFlatMaterial(scene, `leafMat-${w.id}`, new Color3(0.22, 0.5, 0.24));
-  const rockM = makeFlatMaterial(scene, `rockMat-${w.id}`, new Color3(0.55, 0.55, 0.58));
+  const rockM = makeFlatMaterial(scene, `rockMat-${w.id}`, new Color3(0.34, 0.34, 0.38));
   const flowerM = makeFlatMaterial(scene, `flowerMat-${w.id}`, new Color3(0.95, 0.55, 0.65));
   const torchPostM = makeFlatMaterial(scene, `torchPostMat-${w.id}`, new Color3(0.35, 0.25, 0.15));
   const flameM = makeFlatMaterial(scene, `flameMat-${w.id}`, new Color3(1, 0.6, 0.15));
@@ -169,8 +169,16 @@ export function buildWorld(
         }
         case "R": {
           const m = MeshBuilder.CreateIcoSphere(`rock-${tx}-${tz}`, { radius: 0.8, subdivisions: 0 }, scene);
-          m.position.set(wx, 0.4, wz);
-          m.scaling.y = 0.65;
+          m.position.set(wx, 0.32, wz);
+          // Irregular rock, not a ball: deterministic pseudo-random squash,
+          // tilt and size per tile so no two read as a perfect sphere.
+          const v1 = ((tx * 7 + tz * 13) % 10) / 10;
+          const v2 = ((tx * 11 + tz * 5) % 10) / 10;
+          const v3 = ((tx * 3 + tz * 17) % 10) / 10;
+          m.scaling.set(0.75 + v1 * 0.5, 0.5 + v2 * 0.3, 0.75 + v3 * 0.5);
+          m.rotation.y = v1 * Math.PI * 2;
+          m.rotation.x = (v2 - 0.5) * 0.5;
+          m.rotation.z = (v3 - 0.5) * 0.5;
           m.material = rockM;
           m.parent = root;
           cast(m);

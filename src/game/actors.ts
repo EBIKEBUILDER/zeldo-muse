@@ -360,14 +360,21 @@ export function buildBreakableMeshes(
   for (const d of defs) {
     const root = new TransformNode(`breakable-${d.id}`, scene);
     if (d.kind === "grass") {
-      const tuft = MeshBuilder.CreateCylinder(
-        `tuft-${d.id}`,
-        { diameterTop: 0.12, diameterBottom: 0.5, height: 0.8, tessellation: 5 },
-        scene,
-      );
-      tuft.position.y = 0.4;
-      tuft.material = tuftMat;
-      tuft.parent = root;
+      // Grass tuft: three crossed blades instead of a cone, so it reads as
+      // a grass tuft instead of a miniature tree. Thin boxes give it volume
+      // from the overhead camera without double-sided plane fuss.
+      for (let i = 0; i < 3; i++) {
+        const blade = MeshBuilder.CreateBox(
+          `tuft-${d.id}-${i}`,
+          { width: 0.16, height: 0.7, depth: 0.55 },
+          scene,
+        );
+        blade.position.y = 0.32;
+        blade.rotation.y = (i / 3) * Math.PI + ((d.id * 2.39) % 1) * 0.5;
+        blade.rotation.x = (i === 1 ? -1 : 1) * 0.12;
+        blade.material = tuftMat;
+        blade.parent = root;
+      }
       root.rotation.y = (d.id * 2.39) % (Math.PI * 2);
     } else {
       const pot = MeshBuilder.CreateCylinder(
