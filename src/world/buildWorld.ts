@@ -66,7 +66,8 @@ export function buildWorld(
   for (let tx = 0; tx < maxTx; tx++) {
     for (let tz = 0; tz < maxTz; tz++) {
       const tile = tileAt(tx, tz);
-      if (tile === null || tile === ".") continue;
+      // '.' and 'E' are plain grass; 'P' is rendered by the breakables pass.
+      if (tile === null || tile === "." || tile === "E" || tile === "P") continue;
       const wx = tx * TILE_SIZE + TILE_SIZE / 2;
       const wz = tz * TILE_SIZE + TILE_SIZE / 2;
 

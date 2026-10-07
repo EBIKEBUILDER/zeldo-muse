@@ -5,6 +5,19 @@
 
 const down = new Set<string>();
 let initialized = false;
+let attackQueued = false;
+
+/** Called by the simulation once per frame; true if attack was pressed. */
+export function takeAttack(): boolean {
+  const a = attackQueued;
+  attackQueued = false;
+  return a;
+}
+
+/** Mouse click also swings the sword (wired by the engine). */
+export function queueAttack(): void {
+  attackQueued = true;
+}
 
 function onKeyDown(e: KeyboardEvent): void {
   if (
@@ -15,6 +28,9 @@ function onKeyDown(e: KeyboardEvent): void {
     e.code === "Space"
   ) {
     e.preventDefault();
+  }
+  if ((e.code === "Space" || e.code === "KeyJ") && !e.repeat) {
+    attackQueued = true;
   }
   down.add(e.code);
 }

@@ -14,18 +14,15 @@ import {
 import { useGameStore } from "../store/gameStore";
 import { makeFlatMaterial } from "./materials";
 import { buildWorld } from "../world/buildWorld";
-import { disposeInput, initInput } from "./input";
-import { updateWalker } from "./walker";
+import { buildBreakableMeshes, createActorSync } from "./actors";
+import { disposeInput, initInput, queueAttack } from "./input";
+import { updateGame } from "./simulation";
 
 /**
- * Stage 2 — engine boots the full overworld.
+ * Stage 3 — engine boots the world, actors, and the full simulation.
  *
- * Overhead Zelda-style camera, lighting + soft shadows, the 3x2-screen
- * world built from ASCII maps, and the stage-2 walker (WASD/arrows) so
- * the world is explorable and collision is verifiable.
- *
- * The render loop is the "hot lane": updateWalker moves the player in
- * the store, then meshes sync from the store — no React re-renders.
+ * Per frame: input -> simulation (store) -> actor mesh sync -> render.
+ * The simulation owns all game state; Babylon only mirrors it.
  */
 
 export interface ZeldoEngine {
@@ -69,10 +66,16 @@ export function createZeldoEngine(canvas: HTMLCanvasElement): ZeldoEngine {
   shadowGen.useBlurExponentialShadowMap = true;
   shadowGen.setDarkness(0.3);
 
-  // --- World ---
+  // --- World + actors ---
   const worldRoot = buildWorld(scene, shadowGen);
+  const actorSync = createActorSync(scene, shadowGen);
+  const breakableMeshes = buildBreakableMeshes(
+    scene,
+    shadowGen,
+    useGameStore.getState().breakables,
+  );
 
-  // --- Placeholder hero (real model + animation arrive in stage 3) ---
+  // --- Placeholder hero (real model + animation arrive in a later stage) ---
   const heroRoot = new TransformNode("heroRoot", scene);
   const body = MeshBuilder.CreateCapsule(
     "heroBody",
@@ -103,17 +106,31 @@ export function createZeldoEngine(canvas: HTMLCanvasElement): ZeldoEngine {
   shadowGen.addShadowCaster(head);
 
   initInput();
+  const onCanvasDown = (e: MouseEvent) => {
+    if (e.button === 0) queueAttack();
+  };
+  canvas.addEventListener("mousedown", onCanvasDown);
 
   // --- Hot lane: simulate, then sync meshes from the store ---
   const camTarget = new Vector3();
   scene.onBeforeRenderObservable.add(() => {
     const dt = Math.min(engine.getDeltaTime() / 1000, 0.05);
-    updateWalker(dt);
+    updateGame(dt);
+    actorSync.sync(dt);
 
-    const { player } = useGameStore.getState();
+    const { player, breakables } = useGameStore.getState();
+    for (const b of breakables) {
+      const m = breakableMeshes.get(b.id);
+      if (m) m.setEnabled(b.alive);
+    }
+
     heroRoot.position.x = player.x;
     heroRoot.position.z = player.z;
     heroRoot.rotation.y = player.facing;
+    // Blink while invulnerable.
+    const blink =
+      player.invulnT > 0 && Math.floor(performance.now() / 90) % 2 === 0;
+    heroRoot.setEnabled(!blink);
 
     camera.position.set(player.x, CAM_HEIGHT, player.z + CAM_BACK);
     camTarget.set(player.x, 0, player.z);
@@ -130,7 +147,10 @@ export function createZeldoEngine(canvas: HTMLCanvasElement): ZeldoEngine {
   return {
     dispose: () => {
       window.removeEventListener("resize", onResize);
+      canvas.removeEventListener("mousedown", onCanvasDown);
       disposeInput();
+      actorSync.dispose();
+      for (const [, m] of breakableMeshes) m.dispose();
       worldRoot.dispose();
       scene.dispose();
       engine.dispose();
