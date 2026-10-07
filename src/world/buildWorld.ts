@@ -55,6 +55,29 @@ export function buildWorld(
 
   const cast = (m: Mesh) => shadowGen.addShadowCaster(m);
 
+  // --- Grass patches: flat darker discs scattered on grass for texture ---
+  const patchM = makeFlatMaterial(scene, `patchMat-${w.id}`, new Color3(0.27, 0.5, 0.24));
+  if (!stone) {
+    let seed = 12345 + w.originX * 7 + w.originZ * 13;
+    const rand = () => {
+      seed = (seed * 16807) % 2147483647;
+      return seed / 2147483647;
+    };
+    for (let i = 0; i < 26; i++) {
+      const px = w.originX + rand() * screenPx(w) * w.sx;
+      const pz = w.originZ + rand() * screenPz(w) * w.sz;
+      const pr = 0.7 + rand() * 1.3;
+      const patch = MeshBuilder.CreateCylinder(
+        `patch-${w.id}-${i}`,
+        { diameterTop: pr * 2, diameterBottom: pr * 2, height: 0.02, tessellation: 7 },
+        scene,
+      );
+      patch.position.set(px, 0.015, pz);
+      patch.material = patchM;
+      patch.parent = root;
+    }
+  }
+
   // --- Ground: one plane per screen ---
   for (let sx = 0; sx < w.sx; sx++) {
     for (let sz = 0; sz < w.sz; sz++) {
@@ -155,16 +178,25 @@ export function buildWorld(
           trunk.position.set(wx, 0.6, wz);
           trunk.material = trunkM;
           trunk.parent = root;
-          const leaves = MeshBuilder.CreateCylinder(
-            `leaves-${tx}-${tz}`,
-            { diameterTop: 0.1, diameterBottom: 2.4, height: 2.8, tessellation: 7 },
-            scene,
-          );
-          leaves.position.set(wx, 2.6, wz);
-          leaves.material = leafM;
-          leaves.parent = root;
+          // Layered pine: three stacked tiers, widest at the bottom.
+          const tiers: Array<[number, number, number]> = [
+            [2.6, 1.5, 1.55], // [bottomDiameter, height, yCenter]
+            [1.9, 1.3, 2.55],
+            [1.2, 1.1, 3.4],
+          ];
+          for (let ti = 0; ti < tiers.length; ti++) {
+            const [dBot, h, y] = tiers[ti];
+            const leaves = MeshBuilder.CreateCylinder(
+              `leaves-${tx}-${tz}-${ti}`,
+              { diameterTop: 0.12, diameterBottom: dBot, height: h, tessellation: 8 },
+              scene,
+            );
+            leaves.position.set(wx, y, wz);
+            leaves.material = leafM;
+            leaves.parent = root;
+            cast(leaves);
+          }
           cast(trunk);
-          cast(leaves);
           break;
         }
         case "R": {

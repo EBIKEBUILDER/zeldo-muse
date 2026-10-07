@@ -65,6 +65,12 @@ export function createZeldoEngine(canvas: HTMLCanvasElement): ZeldoEngine {
   sun.intensity = 1.1;
   sun.autoCalcShadowZBounds = true;
   sun.shadowOrthoScale = 2;
+
+  // Subtle distance fog for depth.
+  scene.fogMode = Scene.FOGMODE_LINEAR;
+  scene.fogStart = 55;
+  scene.fogEnd = 110;
+  scene.fogColor = new Color3(0.68, 0.82, 0.9);
   const shadowGen = new ShadowGenerator(1024, sun);
   shadowGen.useBlurExponentialShadowMap = true;
   shadowGen.setDarkness(0.3);
@@ -78,35 +84,76 @@ export function createZeldoEngine(canvas: HTMLCanvasElement): ZeldoEngine {
     useGameStore.getState().breakables,
   );
 
-  // --- Placeholder hero (real model + animation arrive in a later stage) ---
+  // --- Hero: little tunic-wearing adventurer (low-poly) ---
   const heroRoot = new TransformNode("heroRoot", scene);
-  const body = MeshBuilder.CreateCapsule(
-    "heroBody",
-    { radius: 0.45, height: 1.7 },
-    scene,
-  );
-  body.position.y = 0.85;
-  body.material = makeFlatMaterial(
-    scene,
-    "tunicMat",
-    new Color3(0.25, 0.62, 0.3),
-  );
-  body.parent = heroRoot;
+  const tunicMat = makeFlatMaterial(scene, "tunicMat", new Color3(0.22, 0.58, 0.28));
+  const tunicDark = makeFlatMaterial(scene, "tunicDark", new Color3(0.16, 0.42, 0.2));
+  const skinMat = makeFlatMaterial(scene, "skinMat", new Color3(0.96, 0.8, 0.64));
+  const beltMat = makeFlatMaterial(scene, "beltMat", new Color3(0.4, 0.26, 0.14));
+  const eyeMat = makeFlatMaterial(scene, "heroEyeMat", new Color3(0.12, 0.1, 0.12));
 
+  // Tunic: tapered cylinder, wider at the hem.
+  const body = MeshBuilder.CreateCylinder(
+    "heroBody",
+    { diameterTop: 0.55, diameterBottom: 0.85, height: 1.05, tessellation: 8 },
+    scene,
+  );
+  body.position.y = 0.55;
+  body.material = tunicMat;
+  body.parent = heroRoot;
+  // Belt.
+  const belt = MeshBuilder.CreateCylinder(
+    "heroBelt",
+    { diameterTop: 0.62, diameterBottom: 0.66, height: 0.14, tessellation: 8 },
+    scene,
+  );
+  belt.position.y = 0.78;
+  belt.material = beltMat;
+  belt.parent = heroRoot;
+  // Head.
   const head = MeshBuilder.CreateSphere(
     "heroHead",
     { diameter: 0.55, segments: 8 },
     scene,
   );
-  head.position.y = 2.0;
-  head.material = makeFlatMaterial(
-    scene,
-    "skinMat",
-    new Color3(0.96, 0.8, 0.64),
-  );
+  head.position.y = 1.35;
+  head.material = skinMat;
   head.parent = heroRoot;
+  // Pointed adventurer's hat, tilted back a touch.
+  const hat = MeshBuilder.CreateCylinder(
+    "heroHat",
+    { diameterTop: 0.02, diameterBottom: 0.5, height: 0.75, tessellation: 8 },
+    scene,
+  );
+  hat.position.set(0, 1.95, 0.08);
+  hat.rotation.x = -0.22;
+  hat.material = tunicDark;
+  hat.parent = heroRoot;
+  // Eyes on the face (front = -z).
+  for (const sx of [-0.13, 0.13]) {
+    const eye = MeshBuilder.CreateSphere(
+      `heroEye-${sx}`,
+      { diameter: 0.09, segments: 6 },
+      scene,
+    );
+    eye.position.set(sx, 1.38, -0.25);
+    eye.material = eyeMat;
+    eye.parent = heroRoot;
+  }
+  // Simple arms.
+  for (const sx of [-0.42, 0.42]) {
+    const arm = MeshBuilder.CreateCapsule(
+      `heroArm-${sx}`,
+      { radius: 0.11, height: 0.5 },
+      scene,
+    );
+    arm.position.set(sx, 0.75, 0);
+    arm.material = tunicMat;
+    arm.parent = heroRoot;
+  }
   shadowGen.addShadowCaster(body);
   shadowGen.addShadowCaster(head);
+  shadowGen.addShadowCaster(hat);
 
   initInput();
   const onCanvasDown = (e: MouseEvent) => {

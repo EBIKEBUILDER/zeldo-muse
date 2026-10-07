@@ -28,22 +28,43 @@ export function createActorSync(scene: Scene, shadowGen: ShadowGenerator) {
 
   // --- Sword: hidden pivot, blade sweeps during the swing ---
   const swordPivot = new TransformNode("swordPivot", scene);
+  const bladeMat = makeFlatMaterial(scene, "bladeMat", new Color3(0.88, 0.91, 0.95));
+  bladeMat.emissiveColor = new Color3(0.12, 0.13, 0.15);
+  // Tapered blade: box + pyramid tip.
   const blade = MeshBuilder.CreateBox(
     "blade",
-    { width: 0.16, height: 0.1, depth: 1.4 },
+    { width: 0.16, height: 0.07, depth: 1.0 },
     scene,
   );
-  blade.position.set(0, 0, -1.05);
-  blade.material = makeFlatMaterial(scene, "bladeMat", new Color3(0.85, 0.88, 0.92));
+  blade.position.set(0, 0, -0.95);
+  blade.material = bladeMat;
   blade.parent = swordPivot;
+  const tip = MeshBuilder.CreateCylinder(
+    "bladeTip",
+    { diameterTop: 0.02, diameterBottom: 0.16, height: 0.35, tessellation: 4 },
+    scene,
+  );
+  tip.rotation.x = Math.PI / 2;
+  tip.position.set(0, 0, -1.62);
+  tip.material = bladeMat;
+  tip.parent = swordPivot;
   const guard = MeshBuilder.CreateBox(
     "guard",
-    { width: 0.5, height: 0.08, depth: 0.12 },
+    { width: 0.55, height: 0.09, depth: 0.14 },
     scene,
   );
-  guard.position.set(0, 0, -0.35);
-  guard.material = makeFlatMaterial(scene, "guardMat", new Color3(0.5, 0.35, 0.2));
+  guard.position.set(0, 0, -0.42);
+  guard.material = makeFlatMaterial(scene, "guardMat", new Color3(0.85, 0.65, 0.25));
   guard.parent = swordPivot;
+  const grip = MeshBuilder.CreateCylinder(
+    "grip",
+    { diameterTop: 0.09, diameterBottom: 0.09, height: 0.35, tessellation: 6 },
+    scene,
+  );
+  grip.rotation.x = Math.PI / 2;
+  grip.position.set(0, 0, -0.2);
+  grip.material = makeFlatMaterial(scene, "gripMat", new Color3(0.35, 0.22, 0.12));
+  grip.parent = swordPivot;
   swordPivot.setEnabled(false);
   shadowGen.addShadowCaster(blade);
 
@@ -217,25 +238,56 @@ export function createActorSync(scene: Scene, shadowGen: ShadowGenerator) {
         const bodyMat = makeFlatMaterial(
           scene,
           `ebodyMat-${e.id}`,
-          e.boss ? new Color3(0.55, 0.12, 0.35) : new Color3(0.75, 0.25, 0.22),
+          e.boss ? new Color3(0.5, 0.1, 0.32) : new Color3(0.72, 0.22, 0.2),
         );
         body.material = bodyMat;
         body.parent = root;
-        const eyeMat = makeFlatMaterial(
-          scene,
-          `eeyeMat-${e.id}`,
-          new Color3(1, 1, 1),
-        );
+        // Angry eyes: white with red pupils, angled inward.
+        const eyeWhite = makeFlatMaterial(scene, `eeyeW-${e.id}`, new Color3(1, 1, 1));
+        const pupilMat = makeFlatMaterial(scene, `eeyeP-${e.id}`, new Color3(0.7, 0.08, 0.08));
         const eyeOff = r * 0.36;
         for (const sx of [-eyeOff, eyeOff]) {
           const eye = MeshBuilder.CreateSphere(
             `eeye-${e.id}-${sx}`,
-            { diameter: r * 0.3, segments: 6 },
+            { diameter: r * 0.32, segments: 6 },
             scene,
           );
-          eye.position.set(sx, r * 1.05, -r * 0.72);
-          eye.material = eyeMat;
+          eye.position.set(sx, r * 1.08, -r * 0.7);
+          eye.rotation.z = sx < 0 ? 0.25 : -0.25;
+          eye.material = eyeWhite;
           eye.parent = root;
+          const pupil = MeshBuilder.CreateSphere(
+            `epupil-${e.id}-${sx}`,
+            { diameter: r * 0.15, segments: 6 },
+            scene,
+          );
+          pupil.position.set(sx * 0.92, r * 1.06, -r * 0.86);
+          pupil.material = pupilMat;
+          pupil.parent = root;
+        }
+        // Horns: little cones on top (boss gets a crown of them).
+        const hornMat = makeFlatMaterial(
+          scene,
+          `ehorn-${e.id}`,
+          e.boss ? new Color3(0.95, 0.75, 0.25) : new Color3(0.9, 0.85, 0.7),
+        );
+        const hornCount = e.boss ? 5 : 2;
+        for (let hi = 0; hi < hornCount; hi++) {
+          const hx = e.boss ? (hi - 2) * r * 0.42 : (hi === 0 ? -r * 0.45 : r * 0.45);
+          const horn = MeshBuilder.CreateCylinder(
+            `ehorn-${e.id}-${hi}`,
+            {
+              diameterTop: 0.02,
+              diameterBottom: r * (e.boss ? 0.22 : 0.28),
+              height: r * (e.boss ? 0.7 : 0.55),
+              tessellation: 5,
+            },
+            scene,
+          );
+          horn.position.set(hx, r * (e.boss ? 1.75 : 1.55), r * 0.1);
+          horn.rotation.z = e.boss ? (hi - 2) * -0.18 : (hi === 0 ? 0.3 : -0.3);
+          horn.material = hornMat;
+          horn.parent = root;
         }
         shadowGen.addShadowCaster(body);
         rec = { root, bodyMat };
