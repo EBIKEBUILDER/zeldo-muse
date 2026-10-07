@@ -83,6 +83,9 @@ export function createActorSync(scene: Scene, shadowGen: ShadowGenerator) {
     top.material = ironM;
     top.parent = gate;
     gate.position.set(x, 0, z);
+    // Gates sit in the east wall (doorway runs north-south), so rotate 90°
+    // to seal the opening instead of lying parallel to it.
+    gate.rotation.y = Math.PI / 2;
     shadowGen.addShadowCaster(bars);
     gateMeshes.push(gate);
   }
