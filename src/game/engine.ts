@@ -4,27 +4,28 @@ import {
   DirectionalLight,
   Engine,
   HemisphericLight,
-  Mesh,
   MeshBuilder,
   Scene,
   ShadowGenerator,
-  StandardMaterial,
   TransformNode,
   UniversalCamera,
   Vector3,
 } from "@babylonjs/core";
 import { useGameStore } from "../store/gameStore";
+import { makeFlatMaterial } from "./materials";
+import { buildWorld } from "../world/buildWorld";
+import { disposeInput, initInput } from "./input";
+import { updateWalker } from "./walker";
 
 /**
- * Stage 1 — boot the engine.
+ * Stage 2 — engine boots the full overworld.
  *
- * Creates the Babylon scene: overhead Zelda-style camera, lighting,
- * a ground plane, a few placeholder props (replaced by the tile map
- * in stage 2), and a placeholder hero mesh whose transform is synced
- * from the Zustand store every frame.
+ * Overhead Zelda-style camera, lighting + soft shadows, the 3x2-screen
+ * world built from ASCII maps, and the stage-2 walker (WASD/arrows) so
+ * the world is explorable and collision is verifiable.
  *
- * The render loop is the "hot lane": it reads the store directly via
- * `useGameStore.getState()` — no React re-renders involved.
+ * The render loop is the "hot lane": updateWalker moves the player in
+ * the store, then meshes sync from the store — no React re-renders.
  */
 
 export interface ZeldoEngine {
@@ -34,68 +35,6 @@ export interface ZeldoEngine {
 // Camera sits above and behind the player: ~57° overhead tilt, -z is "up-screen".
 const CAM_HEIGHT = 20;
 const CAM_BACK = 13;
-
-function makeFlatMaterial(
-  scene: Scene,
-  name: string,
-  color: Color3,
-): StandardMaterial {
-  const mat = new StandardMaterial(name, scene);
-  mat.diffuseColor = color;
-  mat.specularColor = new Color3(0, 0, 0); // matte, low-poly look
-  return mat;
-}
-
-/** Stage-1 placeholder props so lighting and depth read correctly. */
-function createTestProps(scene: Scene): Mesh[] {
-  const casters: Mesh[] = [];
-  const trunkMat = makeFlatMaterial(scene, "trunkMat", new Color3(0.42, 0.28, 0.16));
-  const leafMat = makeFlatMaterial(scene, "leafMat", new Color3(0.22, 0.5, 0.24));
-  const rockMat = makeFlatMaterial(scene, "rockMat", new Color3(0.55, 0.55, 0.58));
-
-  const treePositions: Array<[number, number]> = [
-    [-8, -6],
-    [7, -9],
-    [-5, 8],
-    [9, 6],
-  ];
-  for (const [x, z] of treePositions) {
-    const trunk = MeshBuilder.CreateCylinder(
-      "trunk",
-      { diameterTop: 0.35, diameterBottom: 0.5, height: 1.2, tessellation: 7 },
-      scene,
-    );
-    trunk.position.set(x, 0.6, z);
-    trunk.material = trunkMat;
-
-    const leaves = MeshBuilder.CreateCylinder(
-      "leaves",
-      { diameterTop: 0.1, diameterBottom: 2.4, height: 2.8, tessellation: 7 },
-      scene,
-    );
-    leaves.position.set(x, 2.6, z);
-    leaves.material = leafMat;
-    casters.push(trunk, leaves);
-  }
-
-  const rockPositions: Array<[number, number]> = [
-    [-3, -4],
-    [4, 3],
-  ];
-  for (const [x, z] of rockPositions) {
-    const rock = MeshBuilder.CreateIcoSphere(
-      "rock",
-      { radius: 0.8, subdivisions: 0 },
-      scene,
-    );
-    rock.position.set(x, 0.4, z);
-    rock.scaling.y = 0.65;
-    rock.material = rockMat;
-    casters.push(rock);
-  }
-
-  return casters;
-}
 
 export function createZeldoEngine(canvas: HTMLCanvasElement): ZeldoEngine {
   const engine = new Engine(canvas, true);
@@ -124,28 +63,14 @@ export function createZeldoEngine(canvas: HTMLCanvasElement): ZeldoEngine {
   );
   sun.diffuse = new Color3(1, 0.96, 0.88);
   sun.intensity = 1.1;
-
-  // --- Ground ---
-  const ground = MeshBuilder.CreateGround(
-    "ground",
-    { width: 64, height: 64 },
-    scene,
-  );
-  ground.material = makeFlatMaterial(
-    scene,
-    "groundMat",
-    new Color3(0.32, 0.58, 0.28),
-  );
-
-  const propCasters = createTestProps(scene);
-
-  // --- Shadows (soft, cheap — one 1024 map from the sun) ---
   sun.autoCalcShadowZBounds = true;
   sun.shadowOrthoScale = 2;
   const shadowGen = new ShadowGenerator(1024, sun);
   shadowGen.useBlurExponentialShadowMap = true;
   shadowGen.setDarkness(0.3);
-  ground.receiveShadows = true;
+
+  // --- World ---
+  const worldRoot = buildWorld(scene, shadowGen);
 
   // --- Placeholder hero (real model + animation arrive in stage 3) ---
   const heroRoot = new TransformNode("heroRoot", scene);
@@ -174,14 +99,17 @@ export function createZeldoEngine(canvas: HTMLCanvasElement): ZeldoEngine {
     new Color3(0.96, 0.8, 0.64),
   );
   head.parent = heroRoot;
+  shadowGen.addShadowCaster(body);
+  shadowGen.addShadowCaster(head);
 
-  for (const caster of [...propCasters, body, head]) {
-    shadowGen.addShadowCaster(caster);
-  }
+  initInput();
 
-  // --- Hot lane: sync meshes from the store every frame ---
+  // --- Hot lane: simulate, then sync meshes from the store ---
   const camTarget = new Vector3();
   scene.onBeforeRenderObservable.add(() => {
+    const dt = Math.min(engine.getDeltaTime() / 1000, 0.05);
+    updateWalker(dt);
+
     const { player } = useGameStore.getState();
     heroRoot.position.x = player.x;
     heroRoot.position.z = player.z;
@@ -202,6 +130,8 @@ export function createZeldoEngine(canvas: HTMLCanvasElement): ZeldoEngine {
   return {
     dispose: () => {
       window.removeEventListener("resize", onResize);
+      disposeInput();
+      worldRoot.dispose();
       scene.dispose();
       engine.dispose();
     },
