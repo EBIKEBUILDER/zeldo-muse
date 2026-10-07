@@ -166,9 +166,9 @@ def main():
 
     # NOTE: create_deployment's target flag does not promote the build.
     # New deployments land with target=null, so the production alias must
-    # be moved explicitly, or zeldo.vercel.app keeps serving the old build.
+    # be moved explicitly, or the site keeps serving the old build.
     if target == "production":
-        alias = "zeldo.vercel.app"
+        alias = "muse.zeldo.site"
         print(f"Assigning alias {alias} to {dep_id}...")
         out = vercel_call(
             "assign_alias",
