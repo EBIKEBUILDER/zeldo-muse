@@ -159,9 +159,23 @@ def main():
             print(f"Final state: {state}  https://{url}")
             if state != "READY":
                 sys.exit(1)
-            return
-    print("Timed out waiting for deployment to finish", file=sys.stderr)
-    sys.exit(1)
+            break
+    else:
+        print("Timed out waiting for deployment to finish", file=sys.stderr)
+        sys.exit(1)
+
+    # NOTE: create_deployment's target flag does not promote the build.
+    # New deployments land with target=null, so the production alias must
+    # be moved explicitly, or zeldo.vercel.app keeps serving the old build.
+    if target == "production":
+        alias = "zeldo.vercel.app"
+        print(f"Assigning alias {alias} to {dep_id}...")
+        out = vercel_call(
+            "assign_alias",
+            {"id": dep_id, "requestBody": {"alias": alias}},
+        )
+        print(f"Alias assigned: https://{alias}")
+    return
 
 
 if __name__ == "__main__":
