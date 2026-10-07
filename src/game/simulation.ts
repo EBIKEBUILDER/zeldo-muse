@@ -9,6 +9,7 @@ import { sfx } from "./audio";
 import {
   DUNGEON_SPAWN,
   OVERWORLD_RETURN,
+  SPAWN,
   WorldDef,
   circleHitsSolid,
   findTiles,
@@ -43,6 +44,8 @@ const ENEMY_SPEED = 4.2;
 const BOSS_SPEED = 5.0;
 const ENEMY_WANDER = 1.8;
 const AGGRO = 11;
+/** Enemies never aggro a player standing inside the spawn safe zone. */
+const SPAWN_SAFE = 8;
 const TOUCH_RANGE = 1.15;
 const ENEMY_RESPAWN = 20;
 
@@ -269,7 +272,12 @@ export function updateGame(dt: number): void {
     const dx = x - e.x;
     const dz = z - e.z;
     const distP = Math.hypot(dx, dz);
-    const seesPlayer = e.world === worldId && distP < AGGRO;
+    // The spawn point is a safe zone: enemies never aggro there, so a new
+    // player always gets a fair start (an enemy once spawned inside aggro
+    // range of spawn and killed idle players in seconds on fast machines).
+    const distSpawn = Math.hypot(x - SPAWN.x, z - SPAWN.z);
+    const seesPlayer =
+      e.world === worldId && distP < AGGRO && distSpawn > SPAWN_SAFE;
     let tx: number;
     let tz: number;
     let spd: number;
