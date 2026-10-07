@@ -138,7 +138,7 @@ export function createActorSync(scene: Scene, shadowGen: ShadowGenerator) {
   const heartMat = makeFlatMaterial(scene, "heartMat", new Color3(0.9, 0.2, 0.25));
   heartMat.emissiveColor = new Color3(0.35, 0.08, 0.1);
 
-  // --- Hit particles: Zelda-style impact sparks, debris, death poofs ---
+  // --- Hit particles: Zeldo-style impact sparks, debris, death poofs ---
   interface Particle {
     mesh: TransformNode;
     vx: number;

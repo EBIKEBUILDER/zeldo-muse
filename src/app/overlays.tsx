@@ -72,7 +72,7 @@ export function Overlays() {
           ZELDO
         </h1>
         <p className="mt-3 text-lg text-emerald-100/90">
-          A tiny 3D Zelda-like in your browser
+          A tiny 3D Zeldo-like in your browser
         </p>
         <div className="mt-8 rounded-lg bg-black/50 px-6 py-4 text-sm leading-7 text-white/85">
           <p>

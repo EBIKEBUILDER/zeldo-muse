@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "Zeldo",
-  description: "A 3D Zelda-like in the browser — overhead 3D, built with Next.js and Babylon.js",
+  description: "A 3D Zeldo-like in the browser — overhead 3D, built with Next.js and Babylon.js",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
