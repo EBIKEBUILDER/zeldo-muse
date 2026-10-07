@@ -16,6 +16,7 @@ import { makeFlatMaterial } from "./materials";
 import { buildWorld } from "../world/buildWorld";
 import { buildBreakableMeshes, createActorSync } from "./actors";
 import { disposeInput, initInput, queueAttack } from "./input";
+import { consumeTrauma } from "./events";
 import { updateGame } from "./simulation";
 import { SPAWN, WORLDS } from "../world/tiles";
 
@@ -149,6 +150,14 @@ export function createZeldoEngine(canvas: HTMLCanvasElement): ZeldoEngine {
     } else {
       camera.position.set(player.x, CAM_HEIGHT, player.z + CAM_BACK);
       camTarget.set(player.x, 0, player.z);
+    }
+    // Impact shake: trauma decays as it's consumed.
+    const trauma = consumeTrauma(dt);
+    if (trauma > 0.01) {
+      const s = trauma * trauma * 0.6;
+      camera.position.x += (Math.random() * 2 - 1) * s;
+      camera.position.y += (Math.random() * 2 - 1) * s * 0.4;
+      camera.position.z += (Math.random() * 2 - 1) * s;
     }
     camera.setTarget(camTarget);
   });

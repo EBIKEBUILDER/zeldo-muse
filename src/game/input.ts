@@ -69,11 +69,16 @@ export function disposeInput(): void {
   down.clear();
 }
 
-/** Normalized 2D move vector. +x = east, +z = south (screen-down). */
+/** Screen-space move vector. +z = south (screen-down).
+ *
+ * NOTE: screen-right is -x in world space. The camera sits south of the
+ * player looking north, and in this Babylon setup +x renders as
+ * screen-left (verified on screen), so D/ArrowRight must drive -x.
+ * Get this backwards and A/D feel inverted. */
 export function getMoveVector(): { x: number; z: number } {
   const x =
-    (down.has("KeyD") || down.has("ArrowRight") ? 1 : 0) -
-    (down.has("KeyA") || down.has("ArrowLeft") ? 1 : 0);
+    (down.has("KeyA") || down.has("ArrowLeft") ? 1 : 0) -
+    (down.has("KeyD") || down.has("ArrowRight") ? 1 : 0);
   const z =
     (down.has("KeyS") || down.has("ArrowDown") ? 1 : 0) -
     (down.has("KeyW") || down.has("ArrowUp") ? 1 : 0);

@@ -5,6 +5,7 @@ import {
   useGameStore,
 } from "../store/gameStore";
 import { getMoveVector, takeAttack } from "./input";
+import { addTrauma, emitSpark } from "./events";
 import { sfx } from "./audio";
 import {
   DUNGEON_SPAWN,
@@ -79,6 +80,7 @@ export function updateGame(dt: number): void {
   quest.doorCd = Math.max(0, quest.doorCd - dt);
   quest.hintCd = Math.max(0, quest.hintCd - dt);
   quest.messageT = Math.max(0, quest.messageT - dt);
+  quest.hurtFlashT = Math.max(0, quest.hurtFlashT - dt);
   const say = (text: string) => {
     quest.message = text;
     quest.messageT = 3;
@@ -205,8 +207,10 @@ export function updateGame(dt: number): void {
       const hp = e.hp - 1;
       const nx = d > 0.01 ? dx / d : 0;
       const nz = d > 0.01 ? dz / d : 0;
+      emitSpark({ x: e.x, z: e.z, kind: "hit" });
       if (hp <= 0) {
         sfx.enemyDie();
+        emitSpark({ x: e.x, z: e.z, kind: "poof" });
         newPickups.push(spawnPickup(nextId++, worldId, "rupee", e.x, e.z));
         if (e.boss) {
           quest.chestUnlocked = true;
@@ -230,6 +234,7 @@ export function updateGame(dt: number): void {
       if (d > SWING_RANGE) return b;
       if (angDiff(Math.atan2(dx, -dz), facing) > SWING_ARC) return b;
       hitSomething = true;
+      emitSpark({ x: b.x, z: b.z, kind: b.kind === "grass" ? "grass" : "pot" });
       if (b.kind === "grass") {
         if (Math.random() < 0.12) {
           newPickups.push(spawnPickup(nextId++, worldId, "rupee", b.x, b.z));
@@ -304,9 +309,12 @@ export function updateGame(dt: number): void {
     const ddx = tx - e.x;
     const ddz = tz - e.z;
     const dd = Math.hypot(ddx, ddz) || 1;
+    // Hitstun: a struck enemy doesn't immediately re-approach, so the
+    // sword knockback reads clearly instead of being swallowed.
+    const stun = e.hurtT > 0 ? 0.25 : 1;
     const k = 1 - Math.exp(-6 * dt);
-    let evx = e.vx + ((ddx / dd) * spd - e.vx) * k;
-    let evz = e.vz + ((ddz / dd) * spd - e.vz) * k;
+    let evx = e.vx + ((ddx / dd) * spd * stun - e.vx) * k;
+    let evz = e.vz + ((ddz / dd) * spd * stun - e.vz) * k;
     let ex = e.x + evx * dt;
     let ez = e.z + evz * dt;
     if (circleHitsSolid(eWorld, ex, ez, ENEMY_R, quest.gateOpen)) {
@@ -349,6 +357,40 @@ export function updateGame(dt: number): void {
     }
   }
 
+  // Solid bodies: the player and enemies can't overlap. Without this,
+  // fighters stack directly on top of each other, which reads as a bug.
+  // The player is shoved out (enemies are heavy); if the player is pinned
+  // against a wall, the enemy gives way instead.
+  for (let i = 0; i < enemies.length; i++) {
+    const e = enemies[i];
+    if (e.dead || e.world !== worldId) continue;
+    let dx = x - e.x;
+    let dz = z - e.z;
+    let d = Math.hypot(dx, dz);
+    const minD = PLAYER_R + ENEMY_R;
+    if (d >= minD) continue;
+    if (d < 0.001) {
+      dx = 1;
+      dz = 0;
+      d = 1;
+    }
+    const push = minD - d;
+    const px = (dx / d) * push;
+    const pz = (dz / d) * push;
+    const nx = x + px;
+    const nz = z + pz;
+    if (!circleHitsSolid(wNow, nx, nz, PLAYER_R, quest.gateOpen)) {
+      x = nx;
+      z = nz;
+    } else {
+      const ex = e.x - px;
+      const ez = e.z - pz;
+      if (!circleHitsSolid(worldById(e.world), ex, ez, ENEMY_R, quest.gateOpen)) {
+        enemies[i] = { ...e, x: ex, z: ez };
+      }
+    }
+  }
+
   // Contact damage.
   for (let i = 0; i < enemies.length; i++) {
     const e = enemies[i];
@@ -357,6 +399,8 @@ export function updateGame(dt: number): void {
     if (d < TOUCH_RANGE) {
       hp -= e.boss ? 2 : 1;
       invulnT = 1.0;
+      quest.hurtFlashT = 0.35;
+      addTrauma(0.55);
       sfx.hurt();
       const dd = d || 1;
       vx += ((x - e.x) / dd) * 11;

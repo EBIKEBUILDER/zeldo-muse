@@ -50,6 +50,7 @@ export function Hud() {
   const message = useGameStore((s) => s.quest.message);
   const messageT = useGameStore((s) => s.quest.messageT);
   const phase = useGameStore((s) => s.quest.phase);
+  const hurtFlashT = useGameStore((s) => s.quest.hurtFlashT);
   const boss = useGameStore((s) =>
     s.enemies.find((e) => e.boss && !e.dead && e.world === s.player.world),
   );
@@ -63,6 +64,14 @@ export function Hud() {
 
   return (
     <>
+      {hurtFlashT > 0 && (
+        <div
+          className="pointer-events-none absolute inset-0 select-none"
+          style={{
+            background: `radial-gradient(ellipse at center, transparent 52%, rgba(220, 30, 30, ${Math.min(0.55, hurtFlashT * 1.8)}) 100%)`,
+          }}
+        />
+      )}
       <div className="pointer-events-none absolute right-4 top-4 flex select-none flex-col items-end gap-2">
         <div className="flex gap-1">{hearts}</div>
         <div className="flex items-center gap-2">

@@ -7,6 +7,7 @@ import {
   TransformNode,
 } from "@babylonjs/core";
 import { makeFlatMaterial } from "./materials";
+import { drainSparks, SparkKind } from "./events";
 import {
   BreakableState,
   useGameStore,
@@ -112,6 +113,80 @@ export function createActorSync(scene: Scene, shadowGen: ShadowGenerator) {
   rupeeMat.emissiveColor = new Color3(0.1, 0.4, 0.15);
   const heartMat = makeFlatMaterial(scene, "heartMat", new Color3(0.9, 0.2, 0.25));
   heartMat.emissiveColor = new Color3(0.35, 0.08, 0.1);
+
+  // --- Hit particles: Zelda-style impact sparks, debris, death poofs ---
+  interface Particle {
+    mesh: TransformNode;
+    vx: number;
+    vy: number;
+    vz: number;
+    life: number;
+    maxLife: number;
+  }
+  const particles: Particle[] = [];
+  const sparkMats = new Map<SparkKind, StandardMaterial>();
+  function sparkMat(kind: SparkKind): StandardMaterial {
+    let m = sparkMats.get(kind);
+    if (!m) {
+      const color =
+        kind === "hit"
+          ? new Color3(1, 0.95, 0.55)
+          : kind === "grass"
+            ? new Color3(0.35, 0.65, 0.3)
+            : kind === "pot"
+              ? new Color3(0.78, 0.48, 0.28)
+              : new Color3(0.92, 0.92, 0.95);
+      m = makeFlatMaterial(scene, `sparkMat-${kind}`, color);
+      m.emissiveColor = color.scale(0.6);
+      sparkMats.set(kind, m);
+    }
+    return m;
+  }
+  function spawnSparks(x: number, z: number, kind: SparkKind): void {
+    const n = kind === "poof" ? 7 : 5;
+    const speed = kind === "hit" ? 7 : 4.5;
+    const size = kind === "poof" ? 0.22 : 0.15;
+    for (let i = 0; i < n; i++) {
+      const mesh = new TransformNode(`spark-${clock.toFixed(3)}-${i}`, scene);
+      const bit = MeshBuilder.CreateBox(
+        `sparkbit-${clock.toFixed(3)}-${i}`,
+        { size },
+        scene,
+      );
+      bit.material = sparkMat(kind);
+      bit.parent = mesh;
+      const a = Math.random() * Math.PI * 2;
+      const sp = speed * (0.4 + Math.random() * 0.8);
+      mesh.position.set(x, 0.8, z);
+      particles.push({
+        mesh,
+        vx: Math.cos(a) * sp,
+        vy: 2 + Math.random() * 3.5,
+        vz: Math.sin(a) * sp,
+        life: 0.28 + Math.random() * 0.14,
+        maxLife: 0.42,
+      });
+    }
+  }
+  function updateParticles(dt: number): void {
+    for (let i = particles.length - 1; i >= 0; i--) {
+      const p = particles[i];
+      p.life -= dt;
+      if (p.life <= 0) {
+        p.mesh.dispose();
+        particles.splice(i, 1);
+        continue;
+      }
+      p.vy -= 14 * dt;
+      p.mesh.position.x += p.vx * dt;
+      p.mesh.position.y = Math.max(0.08, p.mesh.position.y + p.vy * dt);
+      p.mesh.position.z += p.vz * dt;
+      const s = Math.max(0.01, p.life / p.maxLife);
+      p.mesh.scaling.set(s, s, s);
+      p.mesh.rotation.x += dt * 6;
+      p.mesh.rotation.y += dt * 8;
+    }
+  }
 
   let clock = 0;
 
@@ -251,6 +326,8 @@ export function createActorSync(scene: Scene, shadowGen: ShadowGenerator) {
   return {
     sync(dt: number) {
       clock += dt;
+      for (const s of drainSparks()) spawnSparks(s.x, s.z, s.kind);
+      updateParticles(dt);
       syncEnemies();
       syncPickups();
       syncSword();
@@ -260,6 +337,8 @@ export function createActorSync(scene: Scene, shadowGen: ShadowGenerator) {
       for (const [, r] of enemyMeshes) r.root.dispose();
       for (const [, r] of pickupMeshes) r.dispose();
       for (const g of gateMeshes) g.dispose();
+      for (const p of particles) p.mesh.dispose();
+      particles.length = 0;
       swordPivot.dispose();
       enemyMeshes.clear();
       pickupMeshes.clear();

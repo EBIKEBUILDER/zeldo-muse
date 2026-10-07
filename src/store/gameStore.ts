@@ -115,6 +115,8 @@ export interface QuestState {
   /** Toast message + seconds remaining. */
   message: string;
   messageT: number;
+  /** Red damage vignette timer (HUD). Set on player hurt, decays in sim. */
+  hurtFlashT: number;
 }
 
 interface GameState {
@@ -208,6 +210,7 @@ function initialState() {
       phase: "title" as Phase,
       message: "",
       messageT: 0,
+      hurtFlashT: 0,
     } as QuestState,
     nextId: 1001,
   };
