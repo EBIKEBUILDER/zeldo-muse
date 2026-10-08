@@ -6,6 +6,7 @@ import {
   HemisphericLight,
   MeshBuilder,
   Scene,
+  SceneInstrumentation,
   ShadowGenerator,
   TransformNode,
   UniversalCamera,
@@ -17,7 +18,7 @@ import { buildWorld } from "../world/buildWorld";
 import { buildBreakableMeshes, createActorSync } from "./actors";
 import { disposeInput, initInput, queueAttack } from "./input";
 import { consumeTrauma } from "./events";
-import { reportFrame } from "./fps";
+import { reportFrame, reportRender } from "./perf";
 import { updateGame } from "./simulation";
 import { SPAWN, WORLDS } from "../world/tiles";
 
@@ -75,6 +76,11 @@ export function createZeldoEngine(canvas: HTMLCanvasElement): ZeldoEngine {
   const shadowGen = new ShadowGenerator(1024, sun);
   shadowGen.useBlurExponentialShadowMap = true;
   shadowGen.setDarkness(0.3);
+
+  // Instrumentation for the HUD perf panel — counters only, no per-frame cost.
+  const instrumentation = new SceneInstrumentation(scene);
+  instrumentation.captureFrameTime = true;
+  instrumentation.captureRenderTime = true;
 
   // --- Worlds + actors ---
   const worldRoots = WORLDS.map((w) => buildWorld(scene, shadowGen, w));
@@ -213,6 +219,7 @@ export function createZeldoEngine(canvas: HTMLCanvasElement): ZeldoEngine {
   engine.runRenderLoop(() => {
     reportFrame(engine.getDeltaTime() / 1000);
     scene.render();
+    reportRender(scene, instrumentation);
   });
 
   const onResize = () => engine.resize();
@@ -224,6 +231,7 @@ export function createZeldoEngine(canvas: HTMLCanvasElement): ZeldoEngine {
       canvas.removeEventListener("mousedown", onCanvasDown);
       disposeInput();
       actorSync.dispose();
+      instrumentation.dispose();
       for (const [, m] of breakableMeshes) m.dispose();
       for (const r of worldRoots) r.dispose();
       scene.dispose();

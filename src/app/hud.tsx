@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useGameStore } from "../store/gameStore";
-import { getFps } from "../game/fps";
+import { getPerfStats, type PerfStats } from "../game/perf";
 
 /**
  * Stage 4 — HUD. Subscribes only to slow-changing UI state
@@ -57,18 +57,24 @@ function objective(
   return "Find the dungeon entrance";
 }
 
-/** FPS readout, polled twice a second — never in the hot lane. */
-function FpsCounter() {
-  const [fps, setFps] = useState(60);
+/** Performance stats, polled twice a second — never in the hot lane. */
+function PerfPanel() {
+  const [stats, setStats] = useState<PerfStats>(() => getPerfStats());
   useEffect(() => {
-    const id = setInterval(() => setFps(getFps()), 500);
+    const id = setInterval(() => setStats({ ...getPerfStats() }), 500);
     return () => clearInterval(id);
   }, []);
   return (
-    <div className="rounded-lg border border-amber-200/30 bg-black/55 px-2 py-1 shadow-lg backdrop-blur-[2px]">
-      <span className="text-xs font-bold tabular-nums text-emerald-300">
-        {fps} FPS
-      </span>
+    <div className="rounded-lg border border-amber-200/30 bg-black/55 px-2.5 py-1.5 text-right shadow-lg backdrop-blur-[2px]">
+      <div className="text-xs font-bold tabular-nums text-emerald-300">
+        {stats.fps} FPS <span className="font-normal text-zinc-400">· {stats.frameMs.toFixed(1)} ms</span>
+      </div>
+      <div className="mt-0.5 text-[11px] leading-tight tabular-nums text-zinc-200">
+        {stats.drawCalls} draw calls · {stats.activeMeshes} meshes
+      </div>
+      <div className="text-[11px] leading-tight tabular-nums text-zinc-200">
+        {(stats.triangles / 1000).toFixed(1)}k tris · render {stats.renderMs.toFixed(1)} ms
+      </div>
     </div>
   );
 }
@@ -169,7 +175,7 @@ export function Hud() {
           <FullscreenButton />
         </div>
         <div className="flex justify-end">
-          <FpsCounter />
+          <PerfPanel />
         </div>
       </div>
 
