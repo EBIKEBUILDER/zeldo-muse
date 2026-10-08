@@ -2,11 +2,13 @@ import {
   BreakableState,
   EnemyState,
   PickupState,
+  ProjectileState,
   useGameStore,
 } from "../store/gameStore";
 import { getMoveVector, takeAttack } from "./input";
 import { addTrauma, emitSpark } from "./events";
 import { sfx } from "./audio";
+import { findPath } from "./pathfinding";
 import {
   DUNGEON_SPAWN,
   OVERWORLD_RETURN,
@@ -49,6 +51,15 @@ const AGGRO = 11;
 const SPAWN_SAFE = 8;
 const TOUCH_RANGE = 1.15;
 const ENEMY_RESPAWN = 20;
+/** Pathfinding repath cadence: the boss thinks faster. */
+const BOSS_REPATH = 0.45;
+const MOB_REPATH = 0.8;
+/** Boss fires a surprise fireball when stuck this far from the player. */
+const BOSS_STUCK_RANGE = 3.0;
+const BOSS_STUCK_MOVE = 0.5;
+const BOSS_RANGED_CD = 2.4;
+const FIREBALL_SPEED = 9;
+const FIREBALL_LIFE = 2.5;
 
 function angDiff(a: number, b: number): number {
   let d = a - b;
@@ -256,6 +267,7 @@ export function updateGame(dt: number): void {
 
   // ---- enemies ----
   let hp = p.hp;
+  const newProjectiles: ProjectileState[] = [];
   enemies = enemies.map((e) => {
     if (e.dead) {
       const deadT = e.deadT + dt;
@@ -272,6 +284,12 @@ export function updateGame(dt: number): void {
           vz: 0,
           hurtT: 0,
           attackCd: 0,
+          path: [],
+          pathI: 0,
+          repathT: 0,
+          lastX: e.spawnX,
+          lastZ: e.spawnZ,
+          rangedCd: 0,
         };
       }
       return { ...e, deadT };
@@ -292,10 +310,61 @@ export function updateGame(dt: number): void {
     let wx = e.wx;
     let wz = e.wz;
     let wanderT = e.wanderT;
+    let path = e.path;
+    let pathI = e.pathI;
+    let repathT = e.repathT - dt;
+    let lastX = e.lastX;
+    let lastZ = e.lastZ;
+    let rangedCd = Math.max(0, e.rangedCd - dt);
     if (seesPlayer) {
-      tx = x;
-      tz = z;
       spd = e.boss ? BOSS_SPEED : ENEMY_SPEED;
+      // Chase with A*: repath on a cadence (the boss thinks faster, so it
+      // maneuvers around obstacles more intelligently than trash mobs).
+      if (repathT <= 0 || pathI >= path.length) {
+        // Boss stuck check: barely moved since the last repath while the
+        // player is out of reach -> surprise ranged attack. This keeps the
+        // boss threatening even when the geometry beats its pathfinding.
+        if (e.boss && path.length > 0) {
+          const moved = Math.hypot(e.x - lastX, e.z - lastZ);
+          if (moved < BOSS_STUCK_MOVE && distP > BOSS_STUCK_RANGE && rangedCd <= 0) {
+            const d = distP || 1;
+            newProjectiles.push({
+              id: nextId++,
+              world: e.world,
+              x: e.x + (dx / d) * 1.1,
+              z: e.z + (dz / d) * 1.1,
+              vx: (dx / d) * FIREBALL_SPEED,
+              vz: (dz / d) * FIREBALL_SPEED,
+              t: 0,
+              life: FIREBALL_LIFE,
+            });
+            rangedCd = BOSS_RANGED_CD;
+            sfx.bossShoot();
+            emitSpark({ x: e.x, z: e.z, kind: "fire" });
+            addTrauma(0.25);
+          }
+        }
+        path = findPath(eWorld, quest.gateOpen, e.x, e.z, x, z) ?? [];
+        pathI = 0;
+        repathT = e.boss ? BOSS_REPATH : MOB_REPATH;
+        lastX = e.x;
+        lastZ = e.z;
+      }
+      // Skip waypoints we've already reached.
+      while (
+        pathI < path.length &&
+        Math.hypot(path[pathI].x - e.x, path[pathI].z - e.z) < 0.7
+      ) {
+        pathI++;
+      }
+      if (pathI < path.length) {
+        tx = path[pathI].x;
+        tz = path[pathI].z;
+      } else {
+        // No path (unreachable) or path exhausted: head straight in.
+        tx = x;
+        tz = z;
+      }
     } else {
       wanderT -= dt;
       if (wanderT <= 0 || Math.hypot(wx - e.x, wz - e.z) < 0.5) {
@@ -308,6 +377,8 @@ export function updateGame(dt: number): void {
       tx = wx;
       tz = wz;
       spd = ENEMY_WANDER;
+      path = [];
+      pathI = 0;
     }
     const ddx = tx - e.x;
     const ddz = tz - e.z;
@@ -335,6 +406,12 @@ export function updateGame(dt: number): void {
       wx,
       wz,
       wanderT,
+      path,
+      pathI,
+      repathT,
+      lastX,
+      lastZ,
+      rangedCd,
       hurtT: Math.max(0, e.hurtT - dt),
       attackCd: Math.max(0, e.attackCd - dt),
     };
@@ -417,6 +494,38 @@ export function updateGame(dt: number): void {
     hp = 0;
   }
 
+  // ---- boss fireballs ----
+  const projectiles: ProjectileState[] = [];
+  for (const pr of [...st.projectiles, ...newProjectiles]) {
+    const t = pr.t + dt;
+    if (t > pr.life) continue;
+    const nx = pr.x + pr.vx * dt;
+    const nz = pr.z + pr.vz * dt;
+    const pw = worldById(pr.world);
+    if (circleHitsSolid(pw, nx, nz, 0.25, quest.gateOpen)) {
+      emitSpark({ x: nx, z: nz, kind: "fire" });
+      sfx.fireHit();
+      continue;
+    }
+    if (pr.world === worldId && invulnT <= 0) {
+      const d = Math.hypot(nx - x, nz - z);
+      if (d < PLAYER_R + 0.35) {
+        hp -= 1;
+        invulnT = 1.0;
+        quest.hurtFlashT = 0.35;
+        addTrauma(0.5);
+        sfx.hurt();
+        sfx.fireHit();
+        emitSpark({ x: nx, z: nz, kind: "fire" });
+        const dd = d || 1;
+        vx += ((x - nx) / dd) * 9;
+        vz += ((z - nz) / dd) * 9;
+        continue;
+      }
+    }
+    projectiles.push({ ...pr, x: nx, z: nz, t });
+  }
+
   // ---- chest: victory ----
   if (quest.phase === "playing" && worldId === "dungeon") {
     const chestTiles = findTiles(wNow, "C");
@@ -489,6 +598,7 @@ export function updateGame(dt: number): void {
     screen,
     swing,
     enemies,
+    projectiles,
     pickups,
     breakables,
     rupees,

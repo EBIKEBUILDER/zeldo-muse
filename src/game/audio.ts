@@ -115,6 +115,14 @@ export const sfx = {
   hurt() {
     tone({ freq: 170, freqEnd: 60, dur: 0.25, type: "sawtooth", vol: 0.18 });
   },
+  bossShoot() {
+    tone({ freq: 900, freqEnd: 180, dur: 0.3, type: "sawtooth", vol: 0.16 });
+    noiseBurst(0.2, 0.1, 600);
+  },
+  fireHit() {
+    noiseBurst(0.15, 0.14, 1400);
+    tone({ freq: 300, freqEnd: 80, dur: 0.18, type: "square", vol: 0.12 });
+  },
   victory() {
     arp([523, 659, 784, 1046, 784, 1046, 1318], 0.15, {
       dur: 0.24,

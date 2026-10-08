@@ -6,7 +6,7 @@
  * camera shake. No React subscriber ever sees these.
  */
 
-export type SparkKind = "hit" | "grass" | "pot" | "poof";
+export type SparkKind = "hit" | "grass" | "pot" | "poof" | "fire";
 
 export interface Spark {
   x: number;

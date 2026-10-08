@@ -1,5 +1,6 @@
 import {
   Color3,
+  Mesh,
   MeshBuilder,
   Scene,
   ShadowGenerator,
@@ -25,6 +26,9 @@ export function createActorSync(scene: Scene, shadowGen: ShadowGenerator) {
     { root: TransformNode; bodyMat: StandardMaterial }
   >();
   const pickupMeshes = new Map<number, TransformNode>();
+  const projectileMeshes = new Map<number, Mesh>();
+  const fireballMat = makeFlatMaterial(scene, "fireballMat", new Color3(1, 0.42, 0.1));
+  fireballMat.emissiveColor = new Color3(1, 0.3, 0.05);
 
   // --- Sword: hidden pivot, blade sweeps during the swing ---
   const swordPivot = new TransformNode("swordPivot", scene);
@@ -159,7 +163,9 @@ export function createActorSync(scene: Scene, shadowGen: ShadowGenerator) {
             ? new Color3(0.35, 0.65, 0.3)
             : kind === "pot"
               ? new Color3(0.78, 0.48, 0.28)
-              : new Color3(0.92, 0.92, 0.95);
+              : kind === "fire"
+                ? new Color3(1, 0.35, 0.08)
+                : new Color3(0.92, 0.92, 0.95);
       m = makeFlatMaterial(scene, `sparkMat-${kind}`, color);
       m.emissiveColor = color.scale(0.6);
       sparkMats.set(kind, m);
@@ -378,6 +384,35 @@ export function createActorSync(scene: Scene, shadowGen: ShadowGenerator) {
     }
   }
 
+  function syncProjectiles() {
+    const { projectiles, player } = useGameStore.getState();
+    const seen = new Set<number>();
+    for (const pr of projectiles) {
+      if (pr.world !== player.world) continue;
+      seen.add(pr.id);
+      let mesh = projectileMeshes.get(pr.id);
+      if (!mesh) {
+        mesh = MeshBuilder.CreateSphere(
+          `fireball-${pr.id}`,
+          { diameter: 0.55, segments: 8 },
+          scene,
+        );
+        mesh.material = fireballMat;
+        projectileMeshes.set(pr.id, mesh);
+      }
+      mesh.position.set(pr.x, 0.9, pr.z);
+      // Pulse: growing threat as it flies.
+      const s = 1 + Math.sin(clock * 18) * 0.18;
+      mesh.scaling.set(s, s, s);
+    }
+    for (const [id, mesh] of projectileMeshes) {
+      if (!seen.has(id)) {
+        mesh.dispose();
+        projectileMeshes.delete(id);
+      }
+    }
+  }
+
   return {
     sync(dt: number) {
       clock += dt;
@@ -387,16 +422,19 @@ export function createActorSync(scene: Scene, shadowGen: ShadowGenerator) {
       syncPickups();
       syncSword();
       syncQuest();
+      syncProjectiles();
     },
     dispose() {
       for (const [, r] of enemyMeshes) r.root.dispose();
       for (const [, r] of pickupMeshes) r.dispose();
+      for (const [, m] of projectileMeshes) m.dispose();
       for (const g of gateMeshes) g.dispose();
       for (const p of particles) p.mesh.dispose();
       particles.length = 0;
       swordPivot.dispose();
       enemyMeshes.clear();
       pickupMeshes.clear();
+      projectileMeshes.clear();
     },
   };
 }

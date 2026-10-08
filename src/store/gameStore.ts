@@ -78,6 +78,29 @@ export interface EnemyState {
   wx: number;
   wz: number;
   wanderT: number;
+  /** Pathfinding: current A* waypoints (scene space) + next index. */
+  path: Array<{ x: number; z: number }>;
+  pathI: number;
+  /** Countdown to next repath. */
+  repathT: number;
+  /** Position at the last repath (boss stuck detection baseline). */
+  lastX: number;
+  lastZ: number;
+  /** Boss ranged attack cooldown. */
+  rangedCd: number;
+}
+
+/** Boss fireball: hostile projectile. */
+export interface ProjectileState {
+  id: number;
+  world: WorldId;
+  x: number;
+  z: number;
+  vx: number;
+  vz: number;
+  /** Age; dies at life. */
+  t: number;
+  life: number;
 }
 
 export interface PickupState {
@@ -124,6 +147,7 @@ interface GameState {
   screen: ScreenState;
   swing: SwingState;
   enemies: EnemyState[];
+  projectiles: ProjectileState[];
   pickups: PickupState[];
   breakables: BreakableState[];
   rupees: number;
@@ -160,6 +184,12 @@ function initialEnemies(): EnemyState[] {
         wx: s.x,
         wz: s.z,
         wanderT: 0,
+        path: [],
+        pathI: 0,
+        repathT: 0,
+        lastX: s.x,
+        lastZ: s.z,
+        rangedCd: 0,
       });
     }
   }
@@ -197,6 +227,7 @@ function initialState() {
     screen: { x: 0, y: 0 } as ScreenState,
     swing: { active: false, t: 0, cd: 0, didHit: false } as SwingState,
     enemies: initialEnemies(),
+    projectiles: [] as ProjectileState[],
     pickups: [] as PickupState[],
     breakables: initialBreakables(),
     rupees: 0,
