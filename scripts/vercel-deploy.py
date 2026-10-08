@@ -28,7 +28,7 @@ PROJECT_NAME = "zeldo"
 PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 EXCLUDE_DIRS = {".git", "node_modules", ".next", ".vercel", "scripts"}
-EXCLUDE_FILES = {"package-lock.json"}
+EXCLUDE_FILES = {"package-lock.json", "tsconfig.tsbuildinfo"}
 
 
 def collect_files():
