@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useGameStore } from "../store/gameStore";
+import { getFps } from "../game/fps";
 
 /**
  * Stage 4 — HUD. Subscribes only to slow-changing UI state
@@ -54,6 +55,22 @@ function objective(
     return "Slay the boss, claim the Sun Shard";
   }
   return "Find the dungeon entrance";
+}
+
+/** FPS readout, polled twice a second — never in the hot lane. */
+function FpsCounter() {
+  const [fps, setFps] = useState(60);
+  useEffect(() => {
+    const id = setInterval(() => setFps(getFps()), 500);
+    return () => clearInterval(id);
+  }, []);
+  return (
+    <div className="rounded-lg border border-amber-200/30 bg-black/55 px-2 py-1 shadow-lg backdrop-blur-[2px]">
+      <span className="text-xs font-bold tabular-nums text-emerald-300">
+        {fps} FPS
+      </span>
+    </div>
+  );
 }
 
 /** Fullscreen toggle for mobile — hides the browser chrome while playing. */
@@ -151,6 +168,9 @@ export function Hud() {
         <div className="flex justify-end">
           <FullscreenButton />
         </div>
+        <div className="flex justify-end">
+          <FpsCounter />
+        </div>
       </div>
 
       {/* Quest objective */}
@@ -184,6 +204,7 @@ export function Hud() {
           </div>
         </div>
       )}
+
     </>
   );
 }

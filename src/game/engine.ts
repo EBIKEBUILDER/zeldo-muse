@@ -17,6 +17,7 @@ import { buildWorld } from "../world/buildWorld";
 import { buildBreakableMeshes, createActorSync } from "./actors";
 import { disposeInput, initInput, queueAttack } from "./input";
 import { consumeTrauma } from "./events";
+import { reportFrame } from "./fps";
 import { updateGame } from "./simulation";
 import { SPAWN, WORLDS } from "../world/tiles";
 
@@ -210,6 +211,7 @@ export function createZeldoEngine(canvas: HTMLCanvasElement): ZeldoEngine {
   });
 
   engine.runRenderLoop(() => {
+    reportFrame(engine.getDeltaTime() / 1000);
     scene.render();
   });
 

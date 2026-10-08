@@ -4,6 +4,7 @@ import {
   MeshBuilder,
   Scene,
   ShadowGenerator,
+  StandardMaterial,
   TransformNode,
 } from "@babylonjs/core";
 import { makeFlatMaterial } from "../game/materials";
@@ -24,6 +25,10 @@ import {
  * Static geometry only: grounds, tile detail, props, walls, torches,
  * door archways. Interactive pieces (gate, key, chest) live in actors.ts
  * because they react to quest state.
+ *
+ * Performance: every static mesh is baked and merged by material, so the
+ * whole world renders in ~15 draw calls instead of hundreds. The visual
+ * result is identical — merging only concatenates vertex buffers.
  */
 export function buildWorld(
   scene: Scene,
@@ -52,11 +57,39 @@ export function buildWorld(
   flameM.emissiveColor = new Color3(1, 0.45, 0.1);
   const doorM = makeFlatMaterial(scene, `doorMat-${w.id}`, new Color3(0.18, 0.14, 0.2));
   const doorDark = makeFlatMaterial(scene, `doorDark-${w.id}`, new Color3(0.02, 0.02, 0.03));
+  const patchM = makeFlatMaterial(scene, `patchMat-${w.id}`, new Color3(0.27, 0.5, 0.24));
 
-  const cast = (m: Mesh) => shadowGen.addShadowCaster(m);
+  // --- Merge buckets: material -> { meshes, castShadow, receiveShadow } ---
+  interface Bucket {
+    mat: StandardMaterial;
+    meshes: Mesh[];
+    cast: boolean;
+    receive: boolean;
+  }
+  const buckets = new Map<StandardMaterial, Bucket>();
+  const bucket = (mat: StandardMaterial): Bucket => {
+    let b = buckets.get(mat);
+    if (!b) {
+      b = { mat, meshes: [], cast: false, receive: false };
+      buckets.set(mat, b);
+    }
+    return b;
+  };
+  /** Stage a mesh for merging: bake its transform, queue by material. */
+  const stage = (
+    m: Mesh,
+    mat: StandardMaterial,
+    opts?: { cast?: boolean; receive?: boolean },
+  ) => {
+    m.material = mat;
+    m.bakeCurrentTransformIntoVertices();
+    const b = bucket(mat);
+    b.meshes.push(m);
+    if (opts?.cast) b.cast = true;
+    if (opts?.receive) b.receive = true;
+  };
 
   // --- Grass patches: flat darker discs scattered on grass for texture ---
-  const patchM = makeFlatMaterial(scene, `patchMat-${w.id}`, new Color3(0.27, 0.5, 0.24));
   if (!stone) {
     let seed = 12345 + w.originX * 7 + w.originZ * 13;
     const rand = () => {
@@ -73,12 +106,11 @@ export function buildWorld(
         scene,
       );
       patch.position.set(px, 0.015, pz);
-      patch.material = patchM;
-      patch.parent = root;
+      stage(patch, patchM);
     }
   }
 
-  // --- Ground: one plane per screen ---
+  // --- Ground: one plane per screen (merged into one) ---
   for (let sx = 0; sx < w.sx; sx++) {
     for (let sz = 0; sz < w.sz; sz++) {
       const ground = MeshBuilder.CreateGround(
@@ -91,9 +123,7 @@ export function buildWorld(
         0,
         w.originZ + sz * screenPz(w) + screenPz(w) / 2,
       );
-      ground.material = groundM;
-      ground.receiveShadows = true;
-      ground.parent = root;
+      stage(ground, groundM, { receive: true });
     }
   }
 
@@ -122,51 +152,40 @@ export function buildWorld(
         case ",": {
           const m = MeshBuilder.CreateBox(`path-${tx}-${tz}`, { width: 1.9, height: 0.06, depth: 1.9 }, scene);
           m.position.set(wx, 0.03, wz);
-          m.material = pathM;
-          m.parent = root;
+          stage(m, pathM);
           break;
         }
         case "~": {
           const m = MeshBuilder.CreateBox(`water-${tx}-${tz}`, { width: TILE_SIZE, height: 0.08, depth: TILE_SIZE }, scene);
           m.position.set(wx, 0.04, wz);
-          m.material = waterM;
-          m.parent = root;
+          stage(m, waterM);
           break;
         }
         case "=": {
           const wm = MeshBuilder.CreateBox(`water-${tx}-${tz}`, { width: TILE_SIZE, height: 0.08, depth: TILE_SIZE }, scene);
           wm.position.set(wx, 0.04, wz);
-          wm.material = waterM;
-          wm.parent = root;
+          stage(wm, waterM);
           const b = MeshBuilder.CreateBox(`bridge-${tx}-${tz}`, { width: TILE_SIZE, height: 0.14, depth: TILE_SIZE }, scene);
           b.position.set(wx, 0.1, wz);
-          b.material = bridgeM;
-          b.receiveShadows = true;
-          b.parent = root;
-          cast(b);
+          stage(b, bridgeM, { cast: true, receive: true });
           break;
         }
         case "*": {
           const m = MeshBuilder.CreateIcoSphere(`flower-${tx}-${tz}`, { radius: 0.22, subdivisions: 0 }, scene);
           m.position.set(wx, 0.18, wz);
-          m.material = flowerM;
-          m.parent = root;
+          stage(m, flowerM);
           break;
         }
         case "#": {
           const m = MeshBuilder.CreateBox(`hedge-${tx}-${tz}`, { width: TILE_SIZE, height: 1.4, depth: TILE_SIZE }, scene);
           m.position.set(wx, 0.7, wz);
-          m.material = hedgeM;
-          m.parent = root;
-          cast(m);
+          stage(m, hedgeM, { cast: true });
           break;
         }
         case "W": {
           const m = MeshBuilder.CreateBox(`wall-${tx}-${tz}`, { width: TILE_SIZE, height: 2.2, depth: TILE_SIZE }, scene);
           m.position.set(wx, 1.1, wz);
-          m.material = wallM;
-          m.parent = root;
-          cast(m);
+          stage(m, wallM, { cast: true });
           break;
         }
         case "T": {
@@ -176,8 +195,7 @@ export function buildWorld(
             scene,
           );
           trunk.position.set(wx, 0.6, wz);
-          trunk.material = trunkM;
-          trunk.parent = root;
+          stage(trunk, trunkM, { cast: true });
           // Layered pine: three stacked tiers, widest at the bottom.
           const tiers: Array<[number, number, number]> = [
             [2.6, 1.5, 1.55], // [bottomDiameter, height, yCenter]
@@ -192,11 +210,8 @@ export function buildWorld(
               scene,
             );
             leaves.position.set(wx, y, wz);
-            leaves.material = leafM;
-            leaves.parent = root;
-            cast(leaves);
+            stage(leaves, leafM, { cast: true });
           }
-          cast(trunk);
           break;
         }
         case "R": {
@@ -211,9 +226,7 @@ export function buildWorld(
           m.rotation.y = v1 * Math.PI * 2;
           m.rotation.x = (v2 - 0.5) * 0.5;
           m.rotation.z = (v3 - 0.5) * 0.5;
-          m.material = rockM;
-          m.parent = root;
-          cast(m);
+          stage(m, rockM, { cast: true });
           break;
         }
         case "o": {
@@ -223,16 +236,14 @@ export function buildWorld(
             scene,
           );
           post.position.set(wx, 0.8, wz);
-          post.material = torchPostM;
-          post.parent = root;
+          stage(post, torchPostM);
           const flame = MeshBuilder.CreateIcoSphere(
             `flame-${tx}-${tz}`,
             { radius: 0.28, subdivisions: 0 },
             scene,
           );
           flame.position.set(wx, 1.85, wz);
-          flame.material = flameM;
-          flame.parent = root;
+          stage(flame, flameM);
           break;
         }
         case "D": {
@@ -242,17 +253,14 @@ export function buildWorld(
             scene,
           );
           arch.position.set(wx, 1.3, wz);
-          arch.material = doorM;
-          arch.parent = root;
+          stage(arch, doorM, { cast: true });
           const mouth = MeshBuilder.CreateBox(
             `doormouth-${tx}-${tz}`,
             { width: 1.4, height: 2.0, depth: 0.75 },
             scene,
           );
           mouth.position.set(wx, 1.0, wz);
-          mouth.material = doorDark;
-          mouth.parent = root;
-          cast(arch);
+          stage(mouth, doorDark);
           break;
         }
       }
@@ -266,14 +274,24 @@ export function buildWorld(
     const border = (name: string, bw: number, bd: number, x: number, z: number) => {
       const b = MeshBuilder.CreateBox(name, { width: bw, height: 1.5, depth: bd }, scene);
       b.position.set(x, 0.75, z);
-      b.material = hedgeM;
-      b.parent = root;
-      cast(b);
+      stage(b, hedgeM, { cast: true });
     };
     border(`border-n-${w.id}`, worldW + 4, 2, w.originX + worldW / 2, w.originZ - 1);
     border(`border-s-${w.id}`, worldW + 4, 2, w.originX + worldW / 2, w.originZ + worldH + 1);
     border(`border-w-${w.id}`, 2, worldH + 4, w.originX - 1, w.originZ + worldH / 2);
     border(`border-e-${w.id}`, 2, worldH + 4, w.originX + worldW + 1, w.originZ + worldH / 2);
+  }
+
+  // --- Merge each material bucket into a single draw call ---
+  for (const b of buckets.values()) {
+    if (b.meshes.length === 0) continue;
+    const merged = Mesh.MergeMeshes(b.meshes, true, false, undefined, false, true);
+    if (!merged) continue;
+    merged.name = `merged-${w.id}-${b.mat.name}`;
+    merged.material = b.mat;
+    merged.parent = root;
+    merged.receiveShadows = b.receive;
+    if (b.cast) shadowGen.addShadowCaster(merged);
   }
 
   return root;

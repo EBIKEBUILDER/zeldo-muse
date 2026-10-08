@@ -469,6 +469,9 @@ export function buildBreakableMeshes(
       // Grass tuft: three crossed blades instead of a cone, so it reads as
       // a grass tuft instead of a miniature tree. Thin boxes give it volume
       // from the overhead camera without double-sided plane fuss.
+      // The blades share one material, so they're baked + merged into a
+      // single mesh per tuft (3 draw calls -> 1).
+      const blades: Mesh[] = [];
       for (let i = 0; i < 3; i++) {
         const blade = MeshBuilder.CreateBox(
           `tuft-${d.id}-${i}`,
@@ -478,8 +481,14 @@ export function buildBreakableMeshes(
         blade.position.y = 0.32;
         blade.rotation.y = (i / 3) * Math.PI + ((d.id * 2.39) % 1) * 0.5;
         blade.rotation.x = (i === 1 ? -1 : 1) * 0.12;
-        blade.material = tuftMat;
-        blade.parent = root;
+        blade.bakeCurrentTransformIntoVertices();
+        blades.push(blade);
+      }
+      const merged = Mesh.MergeMeshes(blades, true, false, undefined, false, true);
+      if (merged) {
+        merged.name = `tuft-${d.id}`;
+        merged.material = tuftMat;
+        merged.parent = root;
       }
       root.rotation.y = (d.id * 2.39) % (Math.PI * 2);
     } else {
