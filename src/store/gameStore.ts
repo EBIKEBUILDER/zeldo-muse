@@ -88,6 +88,12 @@ export interface EnemyState {
   lastZ: number;
   /** Boss ranged attack cooldown. */
   rangedCd: number;
+  /** Boss fireball telegraph: countdown while the boss charges its shot. */
+  windupT: number;
+  /** Mob give-up: seconds of zero progress while chasing. */
+  stuckT: number;
+  /** Mob give-up: walking back to its spawn point. */
+  returning: boolean;
 }
 
 /** Boss fireball: hostile projectile. */
@@ -190,6 +196,9 @@ function initialEnemies(): EnemyState[] {
         lastX: s.x,
         lastZ: s.z,
         rangedCd: 0,
+        windupT: 0,
+        stuckT: 0,
+        returning: false,
       });
     }
   }

@@ -58,8 +58,16 @@ const MOB_REPATH = 0.8;
 const BOSS_STUCK_RANGE = 3.0;
 const BOSS_STUCK_MOVE = 0.5;
 const BOSS_RANGED_CD = 2.4;
+/** Telegraph: the boss visibly charges this long before releasing the fireball. */
+export const BOSS_WINDUP = 0.6;
 const FIREBALL_SPEED = 9;
 const FIREBALL_LIFE = 2.5;
+/** Mobs give up chasing after this long making zero progress (generous: they don't quit easily). */
+const MOB_GIVE_UP = 6.0;
+/** Per-repath movement below this counts as "no progress" toward the player. */
+const MOB_STUCK_MOVE = 0.3;
+/** Inside this range the mob is fighting, not stuck — never time out in melee. */
+const MOB_FIGHT_RANGE = 2.5;
 
 function angDiff(a: number, b: number): number {
   let d = a - b;
@@ -290,6 +298,9 @@ export function updateGame(dt: number): void {
           lastX: e.spawnX,
           lastZ: e.spawnZ,
           rangedCd: 0,
+          windupT: 0,
+          stuckT: 0,
+          returning: false,
         };
       }
       return { ...e, deadT };
@@ -316,39 +327,82 @@ export function updateGame(dt: number): void {
     let lastX = e.lastX;
     let lastZ = e.lastZ;
     let rangedCd = Math.max(0, e.rangedCd - dt);
-    if (seesPlayer) {
+    let windupT = Math.max(0, e.windupT - dt);
+    let stuckT = e.stuckT;
+    let returning = e.returning;
+    // Boss fireball release: the telegraph finished this tick, so the shot
+    // aims at where the player is *now* — keep moving to dodge it.
+    const windupDone = e.windupT > 0 && windupT <= 0;
+    if (returning) {
+      // Gave up the chase: walk home, then resume normal behavior.
+      const dh = Math.hypot(e.spawnX - e.x, e.spawnZ - e.z);
+      if (dh < 1.2) {
+        returning = false;
+        stuckT = 0;
+      }
+      if (returning) {
+        tx = e.spawnX;
+        tz = e.spawnZ;
+        spd = ENEMY_WANDER;
+        path = [];
+        pathI = 0;
+      } else {
+        // Just arrived home: idle a tick, normal logic resumes next tick.
+        tx = e.x;
+        tz = e.z;
+        spd = 0;
+      }
+    } else if (seesPlayer) {
       spd = e.boss ? BOSS_SPEED : ENEMY_SPEED;
       // Chase with A*: repath on a cadence (the boss thinks faster, so it
       // maneuvers around obstacles more intelligently than trash mobs).
-      if (repathT <= 0 || pathI >= path.length) {
-        // Boss stuck check: barely moved since the last repath while the
-        // player is out of reach -> surprise ranged attack. This keeps the
-        // boss threatening even when the geometry beats its pathfinding.
-        if (e.boss && path.length > 0) {
-          const moved = Math.hypot(e.x - lastX, e.z - lastZ);
-          if (moved < BOSS_STUCK_MOVE && distP > BOSS_STUCK_RANGE && rangedCd <= 0) {
-            const d = distP || 1;
-            newProjectiles.push({
-              id: nextId++,
-              world: e.world,
-              x: e.x + (dx / d) * 1.1,
-              z: e.z + (dz / d) * 1.1,
-              vx: (dx / d) * FIREBALL_SPEED,
-              vz: (dz / d) * FIREBALL_SPEED,
-              t: 0,
-              life: FIREBALL_LIFE,
-            });
-            rangedCd = BOSS_RANGED_CD;
-            sfx.bossShoot();
-            emitSpark({ x: e.x, z: e.z, kind: "fire" });
-            addTrauma(0.25);
-          }
-        }
+      // Throttle repath to the timer when there's no path: without this, an
+      // unreachable target repathed every frame (wasteful A* spam and a
+      // meaningless per-frame stuck measurement).
+      if (repathT <= 0 || (path.length > 0 && pathI >= path.length)) {
+        const moved = Math.hypot(e.x - lastX, e.z - lastZ);
+        const interval = e.boss ? BOSS_REPATH : MOB_REPATH;
+        const prevEmpty = path.length === 0;
         path = findPath(eWorld, quest.gateOpen, e.x, e.z, x, z) ?? [];
         pathI = 0;
-        repathT = e.boss ? BOSS_REPATH : MOB_REPATH;
+        repathT = interval;
         lastX = e.x;
         lastZ = e.z;
+        const stillEmpty = path.length === 0;
+        if (e.boss) {
+          // Boss stuck check: barely moved over the last repath window while
+          // the player is out of reach, or no route two repaths running
+          // (player somewhere the boss can't reach, e.g. a far corner) ->
+          // telegraph a fireball. This keeps the boss threatening even when
+          // the geometry beats its pathfinding.
+          if (
+            (moved < BOSS_STUCK_MOVE || (prevEmpty && stillEmpty)) &&
+            distP > BOSS_STUCK_RANGE &&
+            rangedCd <= 0 &&
+            windupT <= 0
+          ) {
+            windupT = BOSS_WINDUP;
+            sfx.bossCharge();
+            emitSpark({ x: e.x, z: e.z, kind: "fire" });
+            emitSpark({ x: e.x, z: e.z, kind: "fire" });
+          }
+        } else {
+          // Mob stuck check: an extended period of zero progress toward the
+          // player means the geometry won — give up and walk home. The bar
+          // is deliberately high (mobs don't quit easily), and standing in
+          // melee range never counts as stuck.
+          if (moved < MOB_STUCK_MOVE && distP > MOB_FIGHT_RANGE) {
+            stuckT += interval;
+          } else {
+            stuckT = Math.max(0, stuckT - interval * 2);
+          }
+          if (stuckT >= MOB_GIVE_UP) {
+            returning = true;
+            stuckT = 0;
+            path = [];
+            pathI = 0;
+          }
+        }
       }
       // Skip waypoints we've already reached.
       while (
@@ -365,7 +419,15 @@ export function updateGame(dt: number): void {
         tx = x;
         tz = z;
       }
+      if (windupT > 0) {
+        // Telegraphing: the boss plants its feet and charges the shot.
+        tx = e.x;
+        tz = e.z;
+      }
     } else {
+      // Lost sight of the player: not stuck, just wandering — reset the
+      // give-up meter so a fresh chase starts clean.
+      stuckT = 0;
       wanderT -= dt;
       if (wanderT <= 0 || Math.hypot(wx - e.x, wz - e.z) < 0.5) {
         const a = Math.random() * Math.PI * 2;
@@ -379,6 +441,25 @@ export function updateGame(dt: number): void {
       spd = ENEMY_WANDER;
       path = [];
       pathI = 0;
+    }
+    // Boss fireball release (the telegraph just finished): hurl it at the
+    // player's current position. Still only 1 damage — first boss, fair.
+    if (windupDone) {
+      const d = distP || 1;
+      newProjectiles.push({
+        id: nextId++,
+        world: e.world,
+        x: e.x + (dx / d) * 1.1,
+        z: e.z + (dz / d) * 1.1,
+        vx: (dx / d) * FIREBALL_SPEED,
+        vz: (dz / d) * FIREBALL_SPEED,
+        t: 0,
+        life: FIREBALL_LIFE,
+      });
+      rangedCd = BOSS_RANGED_CD;
+      sfx.bossShoot();
+      emitSpark({ x: e.x, z: e.z, kind: "fire" });
+      addTrauma(0.25);
     }
     const ddx = tx - e.x;
     const ddz = tz - e.z;
@@ -412,6 +493,9 @@ export function updateGame(dt: number): void {
       lastX,
       lastZ,
       rangedCd,
+      windupT,
+      stuckT,
+      returning,
       hurtT: Math.max(0, e.hurtT - dt),
       attackCd: Math.max(0, e.attackCd - dt),
     };

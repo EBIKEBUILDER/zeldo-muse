@@ -119,6 +119,12 @@ export const sfx = {
     tone({ freq: 900, freqEnd: 180, dur: 0.3, type: "sawtooth", vol: 0.16 });
     noiseBurst(0.2, 0.1, 600);
   },
+  bossCharge() {
+    // Rising whine as the boss inhales before hurling its fireball —
+    // the audio half of the telegraph.
+    tone({ freq: 160, freqEnd: 920, dur: 0.55, type: "sawtooth", vol: 0.13 });
+    noiseBurst(0.5, 0.05, 900);
+  },
   fireHit() {
     noiseBurst(0.15, 0.14, 1400);
     tone({ freq: 300, freqEnd: 80, dur: 0.18, type: "square", vol: 0.12 });

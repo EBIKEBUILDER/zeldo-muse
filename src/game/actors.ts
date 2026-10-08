@@ -14,6 +14,7 @@ import {
   useGameStore,
 } from "../store/gameStore";
 import { DUNGEON, findTiles, tileScenePos } from "../world/tiles";
+import { BOSS_WINDUP } from "./simulation";
 
 /**
  * Stage 4 — Babylon meshes for the simulated actors.
@@ -305,11 +306,23 @@ export function createActorSync(scene: Scene, shadowGen: ShadowGenerator) {
       rec.root.position.set(e.x, 0, e.z);
       const sp = Math.hypot(e.vx, e.vz);
       if (sp > 0.5) rec.root.rotation.y = Math.atan2(-e.vx, -e.vz);
-      const pop = 1 + Math.max(0, e.hurtT) * 1.5;
+      // Telegraph: while charging its fireball the boss plants its feet,
+      // swells up, and smolders brighter orange as the shot nears release.
+      const winding = e.boss && e.windupT > 0;
+      const windupP = winding ? 1 - e.windupT / BOSS_WINDUP : 0;
+      const swell = 1 + windupP * 0.14;
+      const pop = (1 + Math.max(0, e.hurtT) * 1.5) * swell;
       const shrink = e.dead ? Math.max(0.01, 1 - e.deadT / 0.25) : 1;
       rec.root.scaling.set(pop * shrink, pop * shrink, pop * shrink);
-      rec.bodyMat.emissiveColor =
-        e.hurtT > 0 ? new Color3(0.7, 0.7, 0.7) : new Color3(0, 0, 0);
+      if (e.hurtT > 0) {
+        rec.bodyMat.emissiveColor = new Color3(0.7, 0.7, 0.7);
+      } else if (winding) {
+        const flick = 0.75 + 0.25 * Math.sin(clock * 26);
+        const g = (0.35 + 0.65 * windupP) * flick;
+        rec.bodyMat.emissiveColor = new Color3(1.4 * g, 0.32 * g, 0.05 * g);
+      } else {
+        rec.bodyMat.emissiveColor = new Color3(0, 0, 0);
+      }
     }
     for (const [id, rec] of enemyMeshes) {
       if (!seen.has(id)) {
