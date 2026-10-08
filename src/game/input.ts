@@ -1,12 +1,21 @@
 /**
- * Stage 4 — keyboard input. WASD + arrows to move, Space/J/click to swing,
- * M to mute. Real input mapping (gamepad, remapping UI) is future work.
+ * Stage 4 — keyboard + touch input. WASD + arrows to move, Space/J/click
+ * to swing, M to mute. On touch devices a virtual joystick drives the
+ * same move vector via setVirtualMove(). Real input mapping (gamepad,
+ * remapping UI) is future work.
  */
 import { toggleMute } from "./audio";
 
 const down = new Set<string>();
 let initialized = false;
 let attackQueued = false;
+/** Virtual joystick vector (world space, normalized-ish). Set by the touch UI. */
+let virtualMove = { x: 0, z: 0 };
+
+/** Called by the virtual joystick on touch devices. */
+export function setVirtualMove(x: number, z: number): void {
+  virtualMove = { x, z };
+}
 
 /** Called by the simulation once per frame; true if attack was pressed. */
 export function takeAttack(): boolean {
@@ -78,11 +87,15 @@ export function disposeInput(): void {
 export function getMoveVector(): { x: number; z: number } {
   const x =
     (down.has("KeyA") || down.has("ArrowLeft") ? 1 : 0) -
-    (down.has("KeyD") || down.has("ArrowRight") ? 1 : 0);
+    (down.has("KeyD") || down.has("ArrowRight") ? 1 : 0) +
+    virtualMove.x;
   const z =
     (down.has("KeyS") || down.has("ArrowDown") ? 1 : 0) -
-    (down.has("KeyW") || down.has("ArrowUp") ? 1 : 0);
+    (down.has("KeyW") || down.has("ArrowUp") ? 1 : 0) +
+    virtualMove.z;
   if (x === 0 && z === 0) return { x: 0, z: 0 };
   const len = Math.hypot(x, z);
-  return { x: x / len, z: z / len };
+  // Clamp to unit length so diagonal keyboard + joystick can't stack speed.
+  const cl = Math.min(1, len);
+  return { x: (x / len) * cl, z: (z / len) * cl };
 }

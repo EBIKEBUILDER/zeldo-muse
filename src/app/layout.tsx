@@ -17,6 +17,14 @@ export const metadata: Metadata = {
   description: "A 3D Zeldo-like in the browser — overhead 3D, built with Next.js and Babylon.js",
 };
 
+export const viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 1,
+  userScalable: false,
+  viewportFit: "cover",
+};
+
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html

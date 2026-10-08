@@ -1,7 +1,6 @@
 "use client";
 
 import { useGameStore } from "../store/gameStore";
-import { worldById } from "../world/tiles";
 
 /**
  * Stage 4 — HUD. Subscribes only to slow-changing UI state
@@ -40,6 +39,22 @@ function KeyIcon() {
   );
 }
 
+/** Current quest objective, in plain words. */
+function objective(
+  worldId: string,
+  hasKey: boolean,
+  gateOpen: boolean,
+  bossAlive: boolean,
+): string {
+  if (bossAlive === false) return "Claim the treasure chest!";
+  if (worldId === "dungeon") {
+    if (!hasKey) return "Find the Dungeon Key";
+    if (!gateOpen) return "Unlock the boss gate";
+    return "Slay the boss, claim the Sun Shard";
+  }
+  return "Find the dungeon entrance";
+}
+
 export function Hud() {
   const hp = useGameStore((s) => s.player.hp);
   const maxHp = useGameStore((s) => s.player.maxHp);
@@ -47,12 +62,16 @@ export function Hud() {
   const screen = useGameStore((s) => s.screen);
   const worldId = useGameStore((s) => s.player.world);
   const hasKey = useGameStore((s) => s.quest.hasKey);
+  const gateOpen = useGameStore((s) => s.quest.gateOpen);
   const message = useGameStore((s) => s.quest.message);
   const messageT = useGameStore((s) => s.quest.messageT);
   const phase = useGameStore((s) => s.quest.phase);
   const hurtFlashT = useGameStore((s) => s.quest.hurtFlashT);
   const boss = useGameStore((s) =>
     s.enemies.find((e) => e.boss && !e.dead && e.world === s.player.world),
+  );
+  const bossDead = useGameStore((s) =>
+    s.enemies.some((e) => e.boss && e.dead),
   );
 
   const hearts = [];
@@ -73,19 +92,29 @@ export function Hud() {
         />
       )}
       <div className="pointer-events-none absolute right-4 top-4 flex select-none flex-col items-end gap-2">
-        <div className="flex gap-1">{hearts}</div>
-        <div className="flex items-center gap-2">
-          <span className="inline-block h-4 w-4 rotate-45 bg-green-400 shadow" />
-          <span className="text-lg font-bold text-white drop-shadow">× {rupees}</span>
-        </div>
-        {hasKey && (
-          <div className="flex items-center gap-1.5 rounded bg-black/40 px-2 py-1">
-            <KeyIcon />
-            <span className="text-xs font-bold text-amber-200">Dungeon Key</span>
+        {/* RPG status panel */}
+        <div className="rounded-lg border-2 border-amber-200/40 bg-black/55 px-3 py-2 shadow-lg backdrop-blur-[2px]">
+          <div className="flex gap-1">{hearts}</div>
+          <div className="mt-1.5 flex items-center gap-2">
+            <span className="inline-block h-4 w-4 rotate-45 bg-green-400 shadow" />
+            <span className="text-lg font-bold text-white drop-shadow">× {rupees}</span>
           </div>
-        )}
-        <div className="text-xs text-white/60">
-          {worldById(worldId).names[screen.y][screen.x]}
+          {hasKey && (
+            <div className="mt-1.5 flex items-center gap-1.5">
+              <KeyIcon />
+              <span className="text-xs font-bold text-amber-200">Dungeon Key</span>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Quest objective */}
+      <div className="pointer-events-none absolute left-1/2 top-4 -translate-x-1/2 select-none max-sm:left-4 max-sm:top-40 max-sm:translate-x-0">
+        <div className="flex items-center gap-2 rounded-lg border border-amber-200/30 bg-black/55 px-3 py-1.5 shadow-lg backdrop-blur-[2px]">
+          <span className="text-amber-300">◆</span>
+          <span className="text-xs font-bold tracking-wide text-amber-100">
+            {objective(worldId, hasKey, gateOpen, !bossDead)}
+          </span>
         </div>
       </div>
 
