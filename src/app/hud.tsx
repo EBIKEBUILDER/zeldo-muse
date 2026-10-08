@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { useGameStore } from "../store/gameStore";
 
 /**
@@ -55,6 +56,47 @@ function objective(
   return "Find the dungeon entrance";
 }
 
+/** Fullscreen toggle for mobile — hides the browser chrome while playing. */
+function FullscreenButton() {
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [touch, setTouch] = useState(false);
+
+  useEffect(() => {
+    setTouch("ontouchstart" in window || navigator.maxTouchPoints > 0);
+    const onChange = () => setIsFullscreen(!!document.fullscreenElement);
+    document.addEventListener("fullscreenchange", onChange);
+    return () => document.removeEventListener("fullscreenchange", onChange);
+  }, []);
+
+  if (!touch) return null;
+
+  const toggle = () => {
+    if (document.fullscreenElement) {
+      document.exitFullscreen().catch(() => {});
+    } else {
+      document.documentElement.requestFullscreen().catch(() => {});
+    }
+  };
+
+  return (
+    <button
+      onClick={toggle}
+      aria-label={isFullscreen ? "Exit fullscreen" : "Fullscreen"}
+      className="pointer-events-auto mt-2 flex h-10 w-10 items-center justify-center rounded-lg border-2 border-amber-200/40 bg-black/55 text-amber-100 shadow-lg backdrop-blur-[2px] active:bg-black/75"
+    >
+      {isFullscreen ? (
+        <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round">
+          <path d="M8 3v5H3M16 3v5h5M8 21v-5H3M16 21v-5h5" />
+        </svg>
+      ) : (
+        <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round">
+          <path d="M3 8V3h5M21 8V3h-5M3 16v5h5M21 16v5h-5" />
+        </svg>
+      )}
+    </button>
+  );
+}
+
 export function Hud() {
   const hp = useGameStore((s) => s.player.hp);
   const maxHp = useGameStore((s) => s.player.maxHp);
@@ -105,6 +147,9 @@ export function Hud() {
               <span className="text-xs font-bold text-amber-200">Dungeon Key</span>
             </div>
           )}
+        </div>
+        <div className="flex justify-end">
+          <FullscreenButton />
         </div>
       </div>
 
