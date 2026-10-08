@@ -71,7 +71,9 @@ export function Minimap() {
           for (let tx = 0; tx < cols; tx++) {
             for (let tz = 0; tz < rows; tz++) {
               cctx.fillStyle = tileColor(w, tx, tz, st.quest.gateOpen);
-              cctx.fillRect(tx * PX, tz * PX, PX, PX);
+              // Mirror x: world +x renders as screen-left, so tile tx
+              // sits at (cols - 1 - tx) to match the on-screen layout.
+              cctx.fillRect((cols - 1 - tx) * PX, tz * PX, PX, PX);
             }
           }
         }
@@ -80,14 +82,17 @@ export function Minimap() {
       }
       ctx.drawImage(cache, 0, 0);
 
-      const px = ((st.player.x - w.originX) / 2) * PX;
-      const pz = ((st.player.z - w.originZ) / 2) * PX;
+      // World x -> minimap x, mirrored to match screen orientation.
+      const mx = (wx: number) => (cols - (wx - w.originX) / 2) * PX;
+      const mz = (wz: number) => ((wz - w.originZ) / 2) * PX;
+      const px = mx(st.player.x);
+      const pz = mz(st.player.z);
 
       // Enemies.
       for (const e of st.enemies) {
         if (e.dead || e.world !== st.player.world) continue;
-        const ex = ((e.x - w.originX) / 2) * PX;
-        const ez = ((e.z - w.originZ) / 2) * PX;
+        const ex = mx(e.x);
+        const ez = mz(e.z);
         ctx.fillStyle = e.boss ? "#e040fb" : "#ff5252";
         ctx.beginPath();
         ctx.arc(ex, ez, e.boss ? 4 : 2.5, 0, Math.PI * 2);
