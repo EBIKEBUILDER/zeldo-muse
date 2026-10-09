@@ -8,7 +8,7 @@ import {
 import { getMoveVector, takeAttack } from "./input";
 import { addTrauma, emitSpark } from "./events";
 import { sfx } from "./audio";
-import { findPath } from "./pathfinding";
+import { findPath, findPathAcrossWorlds } from "./pathfinding";
 import {
   DUNGEON_SPAWN,
   OVERWORLD_RETURN,
@@ -16,6 +16,7 @@ import {
   WorldDef,
   circleHitsSolid,
   findTiles,
+  nearestPortal,
   screenAtWorld,
   tileScenePos,
   touchesTile,
@@ -54,6 +55,9 @@ const ENEMY_RESPAWN = 20;
 /** Pathfinding repath cadence: the boss thinks faster. */
 const BOSS_REPATH = 0.45;
 const MOB_REPATH = 0.8;
+/** §8.7 How long a monster waits at a portal entrance after the player
+ *  crosses into another world through a non-traversable portal. */
+const LEASH_WAIT = 6;
 /** Boss fires a surprise fireball when stuck this far from the player. */
 const BOSS_STUCK_RANGE = 3.0;
 const BOSS_STUCK_MOVE = 0.5;
@@ -313,8 +317,12 @@ export function updateGame(dt: number): void {
     // player always gets a fair start (an enemy once spawned inside aggro
     // range of spawn and killed idle players in seconds on fast machines).
     const distSpawn = Math.hypot(x - SPAWN.x, z - SPAWN.z);
+    // §8.7 Cross-world vision: same world is the cheap check. Different world
+    // requires a traversable portal path — evaluated on the repath cadence,
+    // not every tick (A* is too expensive for per-frame vision checks).
+    const sameWorld = e.world === worldId;
     const seesPlayer =
-      e.world === worldId && distP < AGGRO && distSpawn > SPAWN_SAFE;
+      sameWorld && distP < AGGRO && distSpawn > SPAWN_SAFE;
     let tx: number;
     let tz: number;
     let spd: number;
@@ -330,22 +338,42 @@ export function updateGame(dt: number): void {
     let windupT = Math.max(0, e.windupT - dt);
     let stuckT = e.stuckT;
     let returning = e.returning;
+    let leashT = e.leashT;
     // Boss fireball release: the telegraph finished this tick, so the shot
     // aims at where the player is *now* — keep moving to dodge it.
     const windupDone = e.windupT > 0 && windupT <= 0;
     if (returning) {
-      // Gave up the chase: walk home, then resume normal behavior.
+      // Gave up the chase: pathfind home with A* (not a straight line —
+      // straight lines clip through walls and leave the monster moonwalking
+      // against them). Then resume normal behavior.
       const dh = Math.hypot(e.spawnX - e.x, e.spawnZ - e.z);
       if (dh < 1.2) {
         returning = false;
         stuckT = 0;
       }
       if (returning) {
-        tx = e.spawnX;
-        tz = e.spawnZ;
         spd = ENEMY_WANDER;
-        path = [];
-        pathI = 0;
+        if (repathT <= 0 || (path.length > 0 && pathI >= path.length)) {
+          path = findPath(eWorld, quest.gateOpen, e.x, e.z, e.spawnX, e.spawnZ) ?? [];
+          pathI = 0;
+          repathT = MOB_REPATH;
+        }
+        // Skip waypoints we've already reached.
+        while (
+          pathI < path.length &&
+          Math.hypot(path[pathI].x - e.x, path[pathI].z - e.z) < 0.7
+        ) {
+          pathI++;
+        }
+        if (pathI < path.length) {
+          tx = path[pathI].x;
+          tz = path[pathI].z;
+        } else {
+          // No path (shouldn't happen — spawn is walkable) or path
+          // exhausted: head straight as a fallback.
+          tx = e.spawnX;
+          tz = e.spawnZ;
+        }
       } else {
         // Just arrived home: idle a tick, normal logic resumes next tick.
         tx = e.x;
@@ -424,6 +452,69 @@ export function updateGame(dt: number): void {
         tx = e.x;
         tz = e.z;
       }
+    } else if (!sameWorld && !returning && (path.length > 0 || leashT > 0)) {
+      // §8.7: The player crossed into another world mid-chase.
+      spd = e.boss ? BOSS_SPEED : ENEMY_SPEED;
+      if (repathT <= 0) {
+        const interval = e.boss ? BOSS_REPATH : MOB_REPATH;
+        // Try to route through a traversable portal.
+        const crossPath = findPathAcrossWorlds(
+          e.world,
+          quest.gateOpen,
+          e.x,
+          e.z,
+          worldId,
+          x,
+          z,
+        );
+        if (crossPath) {
+          // Portal is traversable: the chase continues across worlds.
+          path = crossPath;
+          pathI = 0;
+          leashT = 0;
+        } else {
+          // No traversable route: leash at the portal entrance (classic Zelda).
+          const portal = nearestPortal(e.world, e.x, e.z);
+          if (portal) {
+            const pw = worldById(e.world);
+            const pos = tileScenePos(pw, portal.fromTx, portal.fromTz);
+            path = findPath(eWorld, quest.gateOpen, e.x, e.z, pos.x, pos.z) ?? [];
+            pathI = 0;
+            if (leashT <= 0) leashT = LEASH_WAIT;
+          } else {
+            // No portal in this world at all: give up and go home.
+            returning = true;
+            path = [];
+            pathI = 0;
+          }
+        }
+        repathT = interval;
+        lastX = e.x;
+        lastZ = e.z;
+      }
+      // Waiting at the entrance: count down, then head home.
+      if (leashT > 0) {
+        leashT -= dt;
+        if (leashT <= 0) {
+          returning = true;
+          path = [];
+          pathI = 0;
+        }
+      }
+      // Steer along the path; hold at the entrance when arrived.
+      while (
+        pathI < path.length &&
+        Math.hypot(path[pathI].x - e.x, path[pathI].z - e.z) < 0.7
+      ) {
+        pathI++;
+      }
+      if (pathI < path.length) {
+        tx = path[pathI].x;
+        tz = path[pathI].z;
+      } else {
+        tx = e.x;
+        tz = e.z;
+      }
     } else {
       // Lost sight of the player: not stuck, just wandering — reset the
       // give-up meter so a fresh chase starts clean.
@@ -496,6 +587,7 @@ export function updateGame(dt: number): void {
       windupT,
       stuckT,
       returning,
+      leashT,
       hurtT: Math.max(0, e.hurtT - dt),
       attackCd: Math.max(0, e.attackCd - dt),
     };

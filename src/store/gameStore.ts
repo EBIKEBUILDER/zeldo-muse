@@ -94,6 +94,9 @@ export interface EnemyState {
   stuckT: number;
   /** Mob give-up: walking back to its spawn point. */
   returning: boolean;
+  /** §8.7 Portal leash: seconds to wait at a portal entrance when the player
+   *  crossed into another world through a non-traversable portal. */
+  leashT: number;
 }
 
 /** Boss fireball: hostile projectile. */
@@ -199,6 +202,7 @@ function initialEnemies(): EnemyState[] {
         windupT: 0,
         stuckT: 0,
         returning: false,
+        leashT: 0,
       });
     }
   }

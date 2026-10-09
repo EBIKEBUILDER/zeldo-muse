@@ -359,6 +359,83 @@ export const DUNGEON_SPAWN = tileScenePos(DUNGEON, 6, 8);
 /** Where the dungeon doorway leads (overworld, south of the door). */
 export const OVERWORLD_RETURN = tileScenePos(OVERWORLD, 45, 21);
 
+/**
+ * §8.7 Portal: a first-class pathfinding node linking two worlds.
+ * Dungeon entrances, doors, stairs, and warps are portals — data, not
+ * special cases. A* treats a portal as an edge: expanding the portal tile
+ * may traverse to the destination at the portal's cost.
+ */
+export interface Portal {
+  id: string;
+  fromWorld: WorldId;
+  /** Tile coordinates of the portal in fromWorld. */
+  fromTx: number;
+  fromTz: number;
+  /** Destination world and scene-space position. */
+  toWorld: WorldId;
+  toX: number;
+  toZ: number;
+  /**
+   * Whether AI may pathfind through this portal. Defaults false for dungeon
+   * entrances (classic Zelda leashing: monsters wait at the entrance rather
+   * than following inside). Set true where a chase should continue.
+   */
+  traversableByAI: boolean;
+  /** A* cost of traversing (teleport isn't free — it takes time). */
+  cost: number;
+}
+
+export const PORTALS: Portal[] = [
+  {
+    id: "dungeon-entrance",
+    fromWorld: "overworld",
+    fromTx: 45,
+    fromTz: 7,
+    toWorld: "dungeon",
+    toX: DUNGEON_SPAWN.x,
+    toZ: DUNGEON_SPAWN.z,
+    traversableByAI: false,
+    cost: 4,
+  },
+  {
+    id: "dungeon-exit",
+    fromWorld: "dungeon",
+    fromTx: 6,
+    fromTz: 0,
+    toWorld: "overworld",
+    toX: OVERWORLD_RETURN.x,
+    toZ: OVERWORLD_RETURN.z,
+    traversableByAI: false,
+    cost: 4,
+  },
+];
+
+/** Portals leaving a world that AI may traverse. */
+export function traversablePortals(fromWorld: WorldId): Portal[] {
+  return PORTALS.filter((p) => p.fromWorld === fromWorld && p.traversableByAI);
+}
+
+/** The nearest portal entrance in a world to a scene-space position. */
+export function nearestPortal(
+  fromWorld: WorldId,
+  x: number,
+  z: number,
+): Portal | null {
+  let best: Portal | null = null;
+  let bestD = Infinity;
+  for (const p of PORTALS) {
+    if (p.fromWorld !== fromWorld) continue;
+    const w = worldById(p.fromWorld);
+    const pos = tileScenePos(w, p.fromTx, p.fromTz);
+    const d = Math.hypot(pos.x - x, pos.z - z);
+    if (d < bestD) {
+      bestD = d;
+      best = p;
+    }
+  }
+  return best;
+}
+
 export interface EnemySpawn {
   x: number;
   z: number;

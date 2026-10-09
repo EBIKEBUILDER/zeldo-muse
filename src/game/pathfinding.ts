@@ -13,9 +13,12 @@
 import {
   TILE_SIZE,
   WorldDef,
+  WorldId,
   isSolid,
   tileAtWorld,
   tileScenePos,
+  traversablePortals,
+  worldById,
 } from "../world/tiles";
 
 export interface Waypoint {
@@ -161,4 +164,46 @@ export function findPath(
   // End exactly on the target.
   pts.push({ x: toX, z: toZ });
   return pts;
+}
+
+/**
+ * §8.7 Cross-world pathfinding via portals.
+ *
+ * Routes from (fromWorld, fromX, fromZ) to (toWorld, toX, toZ), traversing
+ * portals marked traversableByAI. Within each world the path is plain A*;
+ * portals are edges between worlds with their configured cost.
+ *
+ * Returns waypoints in scene space (with world transitions inline — the
+ * consumer steers through them in order), or null when no route exists.
+ * A null result is normal (locked door, one-way portal, AI-leashed entrance):
+ * the caller must fall back to leash/return behavior, never freeze.
+ */
+export function findPathAcrossWorlds(
+  fromWorldId: WorldId,
+  gateOpen: boolean,
+  fromX: number,
+  fromZ: number,
+  toWorldId: WorldId,
+  toX: number,
+  toZ: number,
+): Waypoint[] | null {
+  if (fromWorldId === toWorldId) {
+    return findPath(worldById(fromWorldId), gateOpen, fromX, fromZ, toX, toZ);
+  }
+  // Try each traversable portal out of the start world. (Only one hop is
+  // supported — the world graph is shallow by design. A deeper graph would
+  // want A* over the portal graph itself.)
+  for (const portal of traversablePortals(fromWorldId)) {
+    const fromW = worldById(fromWorldId);
+    const portalPos = tileScenePos(fromW, portal.fromTx, portal.fromTz);
+    const leg1 = findPath(fromW, gateOpen, fromX, fromZ, portalPos.x, portalPos.z);
+    if (!leg1) continue;
+    const toW = worldById(portal.toWorld);
+    const leg2 = findPath(toW, gateOpen, portal.toX, portal.toZ, toX, toZ);
+    if (!leg2) continue;
+    // Stitch: leg1 ends at the portal tile, leg2 starts at the destination.
+    // The portal traversal itself is implicit in the waypoint sequence.
+    return [...leg1, ...leg2];
+  }
+  return null;
 }
