@@ -240,7 +240,7 @@ export function createActorSync(scene: Scene, shadowGen: ShadowGenerator) {
         const r = e.boss ? 0.95 : 0.55;
         const body = MeshBuilder.CreateIcoSphere(
           `ebody-${e.id}`,
-          { radius: r, subdivisions: 1 },
+          { radius: r, subdivisions: 2 },
           scene,
         );
         body.position.y = r * 0.9;
@@ -259,7 +259,7 @@ export function createActorSync(scene: Scene, shadowGen: ShadowGenerator) {
         for (const sx of [-eyeOff, eyeOff]) {
           const eye = MeshBuilder.CreateSphere(
             `eeye-${e.id}-${sx}`,
-            { diameter: r * 0.32, segments: 6 },
+            { diameter: r * 0.32, segments: 12 },
             scene,
           );
           eye.position.set(sx, r * 1.08, -r * 0.7);
@@ -268,7 +268,7 @@ export function createActorSync(scene: Scene, shadowGen: ShadowGenerator) {
           eye.parent = root;
           const pupil = MeshBuilder.CreateSphere(
             `epupil-${e.id}-${sx}`,
-            { diameter: r * 0.15, segments: 6 },
+            { diameter: r * 0.15, segments: 12 },
             scene,
           );
           pupil.position.set(sx * 0.92, r * 1.06, -r * 0.86);
