@@ -215,10 +215,26 @@ export function buildWorld(
           break;
         }
         case "R": {
-          const m = MeshBuilder.CreateIcoSphere(`rock-${tx}-${tz}`, { radius: 0.8, subdivisions: 0 }, scene);
+          // Jagged, blocky rock: icosphere with deterministic vertex jitter
+          // and flat shading — reads as stone, not a golf ball.
+          const m = MeshBuilder.CreateIcoSphere(`rock-${tx}-${tz}`, { radius: 0.8, subdivisions: 1 }, scene);
+          const pos = m.getVerticesData("position");
+          if (pos) {
+            for (let i = 0; i < pos.length; i += 3) {
+              // Deterministic hash from tile + vertex index: stable per rock.
+              const h = (tx * 73 + tz * 149 + i * 37) % 100 / 100;
+              const h2 = (tx * 31 + tz * 97 + i * 53) % 100 / 100;
+              const h3 = (tx * 17 + tz * 71 + i * 89) % 100 / 100;
+              const jitter = 0.82 + h * 0.36;
+              pos[i] *= jitter;
+              pos[i + 1] *= 0.82 + h2 * 0.36;
+              pos[i + 2] *= 0.82 + h3 * 0.36;
+            }
+            m.updateVerticesData("position", pos);
+          }
+          m.convertToFlatShadedMesh();
           m.position.set(wx, 0.32, wz);
-          // Irregular rock, not a ball: deterministic pseudo-random squash,
-          // tilt and size per tile so no two read as a perfect sphere.
+          // Deterministic pseudo-random squash, tilt and size per tile.
           const v1 = ((tx * 7 + tz * 13) % 10) / 10;
           const v2 = ((tx * 11 + tz * 5) % 10) / 10;
           const v3 = ((tx * 3 + tz * 17) % 10) / 10;
@@ -226,6 +242,7 @@ export function buildWorld(
           m.rotation.y = v1 * Math.PI * 2;
           m.rotation.x = (v2 - 0.5) * 0.5;
           m.rotation.z = (v3 - 0.5) * 0.5;
+          m.refreshBoundingInfo();
           stage(m, rockM, { cast: true });
           break;
         }
