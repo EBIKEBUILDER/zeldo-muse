@@ -107,7 +107,8 @@ export function createActorSync(scene: Scene, shadowGen: ShadowGenerator) {
     { diameter: 1.1, thickness: 0.08, tessellation: 32 },
     scene,
   );
-  targetRim.rotation.x = Math.PI / 2;
+  // Note: Babylon's torus already lies flat in the XZ plane (no rotation
+  // needed — rotating it stands it up like an arch out of the ground).
   targetRim.material = targetRimMat;
   targetRim.setEnabled(false);
 
@@ -116,7 +117,6 @@ export function createActorSync(scene: Scene, shadowGen: ShadowGenerator) {
     { diameter: AOE_R * 2, thickness: 0.09, tessellation: 40 },
     scene,
   );
-  aoeRim.rotation.x = Math.PI / 2;
   aoeRim.material = targetRimMat;
   aoeRim.setEnabled(false);
 
