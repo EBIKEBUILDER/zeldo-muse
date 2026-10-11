@@ -87,8 +87,10 @@ export const LOB_TIME = 0.95;
 export const AOE_R = 1.6;
 export const FIRE_LIFE = 3.2;
 /** After a sword hit, the boss shrugs off knockback/hitstun this long
- *  (still takes damage). Kills the sword-spam perma-lock exploit. */
-const POISE_TIME = 0.6;
+ *  (still takes damage). Kills the sword-spam perma-lock exploit.
+ *  Must exceed the swing cycle (0.25s swing + 0.45s cooldown = 0.7s)
+ *  or poise expires between spam swings and every hit still juggles. */
+export const POISE_TIME = 1.0;
 /** Mobs give up chasing after this long making zero progress (generous: they don't quit easily). */
 const MOB_GIVE_UP = 6.0;
 /** Per-repath movement below this counts as "no progress" toward the player. */
@@ -511,6 +513,8 @@ export function updateGame(dt: number): void {
       // Throttle repath to the timer when there's no path: without this, an
       // unreachable target repathed every frame (wasteful A* spam and a
       // meaningless per-frame stuck measurement).
+      // Latch: is the boss stuck? Measured at repath ticks, consumed below.
+      let bossStuck = false;
       if (repathT <= 0 || (path.length > 0 && pathI >= path.length)) {
         const moved = Math.hypot(e.x - lastX, e.z - lastZ);
         const interval = e.boss ? BOSS_REPATH : MOB_REPATH;
@@ -522,30 +526,12 @@ export function updateGame(dt: number): void {
         lastZ = e.z;
         const stillEmpty = path.length === 0;
         if (e.boss) {
-          // Boss attack triggers (only from chase mode — never mid-attack).
-          const bossStuck =
+          // Boss stuck latch: barely moved over the last repath window while
+          // the player is out of reach, or no route two repaths running
+          // (player somewhere the boss can't reach, e.g. a far corner).
+          bossStuck =
             (moved < BOSS_STUCK_MOVE || (prevEmpty && stillEmpty)) &&
             distP > BOSS_STUCK_RANGE;
-          if (mode === "chase" && lungeCd <= 0 && distP < LUNGE_RANGE && distP > 1.2) {
-            // Player in lunge range: warn, then telegraph, then dash.
-            mode = "lungeWarn";
-            modeT = LUNGE_WARN;
-            sfx.bossWarn();
-          } else if (
-            mode === "chase" &&
-            rangedCd <= 0 &&
-            (distP > RANGED_TRIGGER || bossStuck)
-          ) {
-            // Player at range (or boss can't reach): aim a lobbed shot.
-            // The target locks when aiming starts — keep moving to dodge.
-            mode = "rangedAim";
-            modeT = RANGED_AIM;
-            aimX = x;
-            aimZ = z;
-            sfx.bossCharge();
-            emitSpark({ x: e.x, z: e.z, kind: "fire" });
-            emitSpark({ x: e.x, z: e.z, kind: "fire" });
-          }
         } else {
           // Mob stuck check: an extended period of zero progress toward the
           // player means the geometry won — give up and walk home. The bar
@@ -578,6 +564,27 @@ export function updateGame(dt: number): void {
         // No path (unreachable) or path exhausted: head straight in.
         tx = x;
         tz = z;
+      }
+      // Boss attack triggers: evaluated every frame while chasing (the
+      // repath cadence is too coarse — the boss crosses the trigger window
+      // between repaths). Only from chase mode, never mid-attack.
+      if (e.boss && mode === "chase") {
+        if (lungeCd <= 0 && distP < LUNGE_RANGE && distP > 1.2) {
+          // Player in lunge range: warn, then telegraph, then dash.
+          mode = "lungeWarn";
+          modeT = LUNGE_WARN;
+          sfx.bossWarn();
+        } else if (rangedCd <= 0 && (distP > RANGED_TRIGGER || bossStuck)) {
+          // Player at range (or boss can't reach): aim a lobbed shot.
+          // The target locks when aiming starts — keep moving to dodge.
+          mode = "rangedAim";
+          modeT = RANGED_AIM;
+          aimX = x;
+          aimZ = z;
+          sfx.bossCharge();
+          emitSpark({ x: e.x, z: e.z, kind: "fire" });
+          emitSpark({ x: e.x, z: e.z, kind: "fire" });
+        }
       }
       } // end chase-mode else (boss attack modes handled above)
     } else if (!sameWorld && !returning && (path.length > 0 || leashT > 0)) {
