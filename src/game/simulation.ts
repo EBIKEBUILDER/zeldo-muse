@@ -404,6 +404,14 @@ export function updateGame(dt: number): void {
     let aimX = e.aimX;
     let aimZ = e.aimZ;
     const modeDone = e.modeT > 0 && modeT <= 0;
+    // Failsafe: the attack state machine only advances while the boss sees
+    // the player. If sight breaks mid-attack (cover, outran sight range),
+    // abort back to chase — otherwise the timer hits zero with no
+    // transition able to fire and the boss plants itself forever.
+    if (e.boss && mode !== "chase" && !seesPlayer) {
+      mode = "chase";
+      modeT = 0;
+    }
     if (returning) {
       // Gave up the chase: pathfind home with A* (not a straight line —
       // straight lines clip through walls and leave the monster moonwalking

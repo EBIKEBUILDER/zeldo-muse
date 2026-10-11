@@ -77,6 +77,49 @@ export function createActorSync(scene: Scene, shadowGen: ShadowGenerator) {
   aoeDisc.material = aoeMat;
   aoeDisc.setEnabled(false);
 
+  // --- Telegraph outlines: bright rims around the telegraph fills ---
+  const laneRimMat = makeFlatMaterial(scene, "laneRimMat", new Color3(1, 0.85, 0.25));
+  laneRimMat.emissiveColor = new Color3(1, 0.7, 0.15);
+  laneRimMat.alpha = 0.85;
+  const laneOutline = new TransformNode("laneOutline", scene);
+  {
+    // 4 thin boxes forming the lane perimeter, relative to lane center.
+    const t = 0.14;
+    const h = 0.06;
+    const mkRim = (name: string, w: number, d: number, px: number, pz: number) => {
+      const rim = MeshBuilder.CreateBox(name, { width: w, height: h, depth: d }, scene);
+      rim.position.set(px, 0, pz);
+      rim.material = laneRimMat;
+      rim.parent = laneOutline;
+    };
+    mkRim("laneRimL", t, LUNGE_DIST, -1.7 / 2, 0);
+    mkRim("laneRimR", t, LUNGE_DIST, 1.7 / 2, 0);
+    mkRim("laneRimF", 1.7 + 2 * t, t, 0, -LUNGE_DIST / 2);
+    mkRim("laneRimB", 1.7 + 2 * t, t, 0, LUNGE_DIST / 2);
+  }
+  laneOutline.setEnabled(false);
+
+  const targetRimMat = makeFlatMaterial(scene, "targetRimMat", new Color3(1, 0.45, 0.15));
+  targetRimMat.emissiveColor = new Color3(1, 0.3, 0.08);
+  targetRimMat.alpha = 0.9;
+  const targetRim = MeshBuilder.CreateTorus(
+    "targetRim",
+    { diameter: 1.1, thickness: 0.08, tessellation: 32 },
+    scene,
+  );
+  targetRim.rotation.x = Math.PI / 2;
+  targetRim.material = targetRimMat;
+  targetRim.setEnabled(false);
+
+  const aoeRim = MeshBuilder.CreateTorus(
+    "aoeRim",
+    { diameter: AOE_R * 2, thickness: 0.09, tessellation: 40 },
+    scene,
+  );
+  aoeRim.rotation.x = Math.PI / 2;
+  aoeRim.material = targetRimMat;
+  aoeRim.setEnabled(false);
+
   const fireMat = makeFlatMaterial(scene, "fireMat", new Color3(1, 0.45, 0.08));
   fireMat.alpha = 0.6;
   fireMat.emissiveColor = new Color3(1, 0.35, 0.05);
@@ -532,15 +575,19 @@ export function createActorSync(scene: Scene, shadowGen: ShadowGenerator) {
     if (boss && boss.mode === "lungeWindup") {
       const pulse = 0.3 + 0.18 * Math.sin(clock * 20);
       laneMat.alpha = pulse;
-      lungeLane.position.set(
-        boss.x + boss.lungeDx * (LUNGE_DIST / 2),
-        0.07,
-        boss.z + boss.lungeDz * (LUNGE_DIST / 2),
-      );
-      lungeLane.rotation.y = Math.atan2(boss.lungeDx, boss.lungeDz);
+      laneRimMat.alpha = 0.65 + 0.3 * Math.sin(clock * 20);
+      const lx = boss.x + boss.lungeDx * (LUNGE_DIST / 2);
+      const lz = boss.z + boss.lungeDz * (LUNGE_DIST / 2);
+      const rot = Math.atan2(boss.lungeDx, boss.lungeDz);
+      lungeLane.position.set(lx, 0.07, lz);
+      lungeLane.rotation.y = rot;
+      laneOutline.position.set(lx, 0.08, lz);
+      laneOutline.rotation.y = rot;
       lungeLane.setEnabled(true);
+      laneOutline.setEnabled(true);
     } else {
       lungeLane.setEnabled(false);
+      laneOutline.setEnabled(false);
     }
     // Ranged target: impact point + AoE splash ring while aiming.
     if (boss && boss.mode === "rangedAim") {
@@ -548,16 +595,24 @@ export function createActorSync(scene: Scene, shadowGen: ShadowGenerator) {
       const pulse = 0.45 + 0.2 * Math.sin(clock * 16);
       targetMat.alpha = pulse;
       aoeMat.alpha = 0.22 + 0.12 * Math.sin(clock * 16);
+      targetRimMat.alpha = 0.7 + 0.25 * Math.sin(clock * 16);
       // The rings tighten as the shot nears release: dodge NOW.
       const tighten = 1 - p * 0.25;
       targetDisc.position.set(boss.aimX, 0.08, boss.aimZ);
       targetDisc.scaling.set(tighten, tighten, tighten);
       aoeDisc.position.set(boss.aimX, 0.06, boss.aimZ);
+      targetRim.position.set(boss.aimX, 0.09, boss.aimZ);
+      targetRim.scaling.set(tighten, tighten, tighten);
+      aoeRim.position.set(boss.aimX, 0.07, boss.aimZ);
       targetDisc.setEnabled(true);
       aoeDisc.setEnabled(true);
+      targetRim.setEnabled(true);
+      aoeRim.setEnabled(true);
     } else {
       targetDisc.setEnabled(false);
       aoeDisc.setEnabled(false);
+      targetRim.setEnabled(false);
+      aoeRim.setEnabled(false);
     }
   }
 
@@ -584,8 +639,11 @@ export function createActorSync(scene: Scene, shadowGen: ShadowGenerator) {
       particles.length = 0;
       swordPivot.dispose();
       lungeLane.dispose();
+      laneOutline.dispose();
       targetDisc.dispose();
       aoeDisc.dispose();
+      targetRim.dispose();
+      aoeRim.dispose();
       enemyMeshes.clear();
       pickupMeshes.clear();
       projectileMeshes.clear();
