@@ -14,7 +14,16 @@ import {
   useGameStore,
 } from "../store/gameStore";
 import { DUNGEON, findTiles, tileScenePos } from "../world/tiles";
-import { BOSS_WINDUP } from "./simulation";
+import {
+  AOE_R,
+  BOSS_WINDUP,
+  LOB_HEIGHT,
+  LUNGE_DIST,
+  LUNGE_WARN,
+  LUNGE_WINDUP,
+  RANGED_AIM,
+  STUN_TIME,
+} from "./simulation";
 
 /**
  * Stage 4 — Babylon meshes for the simulated actors.
@@ -28,8 +37,49 @@ export function createActorSync(scene: Scene, shadowGen: ShadowGenerator) {
   >();
   const pickupMeshes = new Map<number, TransformNode>();
   const projectileMeshes = new Map<number, Mesh>();
+  const hazardMeshes = new Map<number, Mesh>();
   const fireballMat = makeFlatMaterial(scene, "fireballMat", new Color3(1, 0.42, 0.1));
   fireballMat.emissiveColor = new Color3(1, 0.3, 0.05);
+
+  // --- Boss telegraphs: ground decals, reused every frame ---
+  const laneMat = makeFlatMaterial(scene, "laneMat", new Color3(1, 0.55, 0.12));
+  laneMat.alpha = 0.38;
+  laneMat.emissiveColor = new Color3(0.9, 0.4, 0.08);
+  const lungeLane = MeshBuilder.CreateBox(
+    "lungeLane",
+    { width: 1.7, height: 0.05, depth: LUNGE_DIST },
+    scene,
+  );
+  lungeLane.material = laneMat;
+  lungeLane.setEnabled(false);
+
+  const targetMat = makeFlatMaterial(scene, "targetMat", new Color3(1, 0.3, 0.12));
+  targetMat.alpha = 0.55;
+  targetMat.emissiveColor = new Color3(0.9, 0.2, 0.08);
+  const targetDisc = MeshBuilder.CreateDisc(
+    "targetDisc",
+    { radius: 0.55, tessellation: 24 },
+    scene,
+  );
+  targetDisc.rotation.x = Math.PI / 2;
+  targetDisc.material = targetMat;
+  targetDisc.setEnabled(false);
+
+  const aoeMat = makeFlatMaterial(scene, "aoeMat", new Color3(1, 0.4, 0.1));
+  aoeMat.alpha = 0.28;
+  aoeMat.emissiveColor = new Color3(0.8, 0.25, 0.05);
+  const aoeDisc = MeshBuilder.CreateDisc(
+    "aoeDisc",
+    { radius: AOE_R, tessellation: 32 },
+    scene,
+  );
+  aoeDisc.rotation.x = Math.PI / 2;
+  aoeDisc.material = aoeMat;
+  aoeDisc.setEnabled(false);
+
+  const fireMat = makeFlatMaterial(scene, "fireMat", new Color3(1, 0.45, 0.08));
+  fireMat.alpha = 0.6;
+  fireMat.emissiveColor = new Color3(1, 0.35, 0.05);
 
   // --- Sword: hidden pivot, blade sweeps during the swing ---
   const swordPivot = new TransformNode("swordPivot", scene);
@@ -306,20 +356,33 @@ export function createActorSync(scene: Scene, shadowGen: ShadowGenerator) {
       rec.root.position.set(e.x, 0, e.z);
       const sp = Math.hypot(e.vx, e.vz);
       if (sp > 0.5) rec.root.rotation.y = Math.atan2(-e.vx, -e.vz);
-      // Telegraph: while charging its fireball the boss plants its feet,
-      // swells up, and smolders brighter orange as the shot nears release.
-      const winding = e.boss && e.windupT > 0;
-      const windupP = winding ? 1 - e.windupT / BOSS_WINDUP : 0;
+      // Boss attack telegraphs, driven by the mode machine:
+      // warn = red flash, windup/aim = orange swell, lunging = stretched,
+      // stunned = gray wobble (punish window).
+      const bmode = e.boss ? e.mode : "chase";
+      const winding = bmode === "lungeWindup" || bmode === "rangedAim";
+      const windupTotal = bmode === "rangedAim" ? RANGED_AIM : LUNGE_WINDUP;
+      const windupP = winding ? 1 - e.modeT / windupTotal : 0;
       const swell = 1 + windupP * 0.14;
+      const stretch = bmode === "lunging" ? 1.25 : 1;
       const pop = (1 + Math.max(0, e.hurtT) * 1.5) * swell;
       const shrink = e.dead ? Math.max(0.01, 1 - e.deadT / 0.25) : 1;
-      rec.root.scaling.set(pop * shrink, pop * shrink, pop * shrink);
+      rec.root.scaling.set(pop * shrink * stretch, (pop * shrink) / stretch, pop * shrink * stretch);
+      // Stunned wobble: the boss lists to one side, dazed.
+      rec.root.rotation.z = bmode === "stunned" ? Math.sin(clock * 7) * 0.12 : 0;
       if (e.hurtT > 0) {
         rec.bodyMat.emissiveColor = new Color3(0.7, 0.7, 0.7);
+      } else if (bmode === "lungeWarn") {
+        const flash = 0.5 + 0.5 * Math.sin(clock * 30);
+        rec.bodyMat.emissiveColor = new Color3(1.6 * flash, 0.08 * flash, 0.08 * flash);
       } else if (winding) {
         const flick = 0.75 + 0.25 * Math.sin(clock * 26);
         const g = (0.35 + 0.65 * windupP) * flick;
         rec.bodyMat.emissiveColor = new Color3(1.4 * g, 0.32 * g, 0.05 * g);
+      } else if (bmode === "lunging") {
+        rec.bodyMat.emissiveColor = new Color3(0.9, 0.25, 0.05);
+      } else if (bmode === "stunned") {
+        rec.bodyMat.emissiveColor = new Color3(0.25, 0.25, 0.3);
       } else {
         rec.bodyMat.emissiveColor = new Color3(0, 0, 0);
       }
@@ -413,7 +476,11 @@ export function createActorSync(scene: Scene, shadowGen: ShadowGenerator) {
         mesh.material = fireballMat;
         projectileMeshes.set(pr.id, mesh);
       }
-      mesh.position.set(pr.x, 0.9, pr.z);
+      // Lobbed shots ride a ballistic arc; flat shots skim low.
+      const y = pr.arc
+        ? 0.9 + Math.sin(Math.PI * Math.min(1, pr.t / pr.dur)) * LOB_HEIGHT
+        : 0.9;
+      mesh.position.set(pr.x, y, pr.z);
       // Pulse: growing threat as it flies.
       const s = 1 + Math.sin(clock * 18) * 0.18;
       mesh.scaling.set(s, s, s);
@@ -423,6 +490,74 @@ export function createActorSync(scene: Scene, shadowGen: ShadowGenerator) {
         mesh.dispose();
         projectileMeshes.delete(id);
       }
+    }
+  }
+
+  function syncHazards() {
+    const { hazards, player } = useGameStore.getState();
+    const seen = new Set<number>();
+    for (const h of hazards) {
+      if (h.world !== player.world) continue;
+      seen.add(h.id);
+      let mesh = hazardMeshes.get(h.id);
+      if (!mesh) {
+        mesh = MeshBuilder.CreateDisc(
+          `hazard-${h.id}`,
+          { radius: h.r, tessellation: 28 },
+          scene,
+        );
+        mesh.rotation.x = Math.PI / 2;
+        mesh.material = fireMat;
+        hazardMeshes.set(h.id, mesh);
+      }
+      // Flicker: the fire is alive and dangerous.
+      const flick = 0.85 + 0.15 * Math.sin(clock * 22 + h.id * 1.7);
+      const fade = Math.min(1, (h.life - h.t) / 0.6);
+      mesh.position.set(h.x, 0.09, h.z);
+      mesh.scaling.set(flick, flick, flick);
+      (mesh.material as StandardMaterial).alpha = 0.6 * fade;
+    }
+    for (const [id, mesh] of hazardMeshes) {
+      if (!seen.has(id)) {
+        mesh.dispose();
+        hazardMeshes.delete(id);
+      }
+    }
+  }
+
+  function syncTelegraphs() {
+    const { enemies, player } = useGameStore.getState();
+    const boss = enemies.find((e) => e.boss && !e.dead && e.world === player.world);
+    // Lunge lane: visible during windup, pointing down the locked dash.
+    if (boss && boss.mode === "lungeWindup") {
+      const pulse = 0.3 + 0.18 * Math.sin(clock * 20);
+      laneMat.alpha = pulse;
+      lungeLane.position.set(
+        boss.x + boss.lungeDx * (LUNGE_DIST / 2),
+        0.07,
+        boss.z + boss.lungeDz * (LUNGE_DIST / 2),
+      );
+      lungeLane.rotation.y = Math.atan2(boss.lungeDx, boss.lungeDz);
+      lungeLane.setEnabled(true);
+    } else {
+      lungeLane.setEnabled(false);
+    }
+    // Ranged target: impact point + AoE splash ring while aiming.
+    if (boss && boss.mode === "rangedAim") {
+      const p = 1 - boss.modeT / RANGED_AIM;
+      const pulse = 0.45 + 0.2 * Math.sin(clock * 16);
+      targetMat.alpha = pulse;
+      aoeMat.alpha = 0.22 + 0.12 * Math.sin(clock * 16);
+      // The rings tighten as the shot nears release: dodge NOW.
+      const tighten = 1 - p * 0.25;
+      targetDisc.position.set(boss.aimX, 0.08, boss.aimZ);
+      targetDisc.scaling.set(tighten, tighten, tighten);
+      aoeDisc.position.set(boss.aimX, 0.06, boss.aimZ);
+      targetDisc.setEnabled(true);
+      aoeDisc.setEnabled(true);
+    } else {
+      targetDisc.setEnabled(false);
+      aoeDisc.setEnabled(false);
     }
   }
 
@@ -436,18 +571,25 @@ export function createActorSync(scene: Scene, shadowGen: ShadowGenerator) {
       syncSword();
       syncQuest();
       syncProjectiles();
+      syncHazards();
+      syncTelegraphs();
     },
     dispose() {
       for (const [, r] of enemyMeshes) r.root.dispose();
       for (const [, r] of pickupMeshes) r.dispose();
       for (const [, m] of projectileMeshes) m.dispose();
+      for (const [, m] of hazardMeshes) m.dispose();
       for (const g of gateMeshes) g.dispose();
       for (const p of particles) p.mesh.dispose();
       particles.length = 0;
       swordPivot.dispose();
+      lungeLane.dispose();
+      targetDisc.dispose();
+      aoeDisc.dispose();
       enemyMeshes.clear();
       pickupMeshes.clear();
       projectileMeshes.clear();
+      hazardMeshes.clear();
     },
   };
 }

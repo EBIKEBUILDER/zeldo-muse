@@ -1,6 +1,7 @@
 import {
   BreakableState,
   EnemyState,
+  HazardState,
   PickupState,
   ProjectileState,
   useGameStore,
@@ -66,6 +67,28 @@ const BOSS_RANGED_CD = 2.4;
 export const BOSS_WINDUP = 0.6;
 const FIREBALL_SPEED = 9;
 const FIREBALL_LIFE = 2.5;
+/** Boss lunge: brief red-flash warning before the telegraph appears. */
+export const LUNGE_WARN = 0.45;
+/** Boss lunge: the impact-lane telegraph is visible this long. */
+export const LUNGE_WINDUP = 0.7;
+export const LUNGE_SPEED = 14;
+export const LUNGE_DIST = 7;
+export const LUNGE_CD = 3.2;
+/** The lunge triggers when the player is inside this range. */
+export const LUNGE_RANGE = 4.5;
+/** Post-lunge stun: the player's punish window. */
+export const STUN_TIME = 1.4;
+/** Ranged aim telegraph before the lobbed shot releases. */
+export const RANGED_AIM = 0.8;
+/** Lobbed shots fire when the player is beyond this range (or boss stuck). */
+export const RANGED_TRIGGER = 6.0;
+export const LOB_HEIGHT = 2.6;
+export const LOB_TIME = 0.95;
+export const AOE_R = 1.6;
+export const FIRE_LIFE = 3.2;
+/** After a sword hit, the boss shrugs off knockback/hitstun this long
+ *  (still takes damage). Kills the sword-spam perma-lock exploit. */
+const POISE_TIME = 0.6;
 /** Mobs give up chasing after this long making zero progress (generous: they don't quit easily). */
 const MOB_GIVE_UP = 6.0;
 /** Per-repath movement below this counts as "no progress" toward the player. */
@@ -230,6 +253,11 @@ export function updateGame(dt: number): void {
       if (d > SWING_RANGE + ENEMY_R) return e;
       if (angDiff(Math.atan2(-dx, -dz), facing) > SWING_ARC) return e;
       hitSomething = true;
+      // The lunge is uninterruptible: swords pass through harmlessly.
+      if (e.boss && e.mode === "lunging") {
+        emitSpark({ x: e.x, z: e.z, kind: "hit" });
+        return e;
+      }
       const hp = e.hp - 1;
       const nx = d > 0.01 ? dx / d : 0;
       const nz = d > 0.01 ? dz / d : 0;
@@ -249,6 +277,23 @@ export function updateGame(dt: number): void {
           newPickups.push(spawnPickup(nextId++, worldId, "heart", e.x, e.z));
         }
         return { ...e, hp: 0, dead: true, deadT: 0 };
+      }
+      if (e.boss) {
+        // Poise: the boss still takes damage, but after each sword hit it
+        // shrugs off knockback and hitstun briefly — no more perma-lock
+        // from spamming the sword. A stunned (post-lunge) boss is planted
+        // and doesn't budge at all: that's the punish window.
+        const poised = e.poiseT > 0;
+        const planted = e.mode === "stunned";
+        const kb = poised || planted ? 0 : 1;
+        return {
+          ...e,
+          hp,
+          hurtT: poised ? 0 : 0.25,
+          poiseT: POISE_TIME,
+          vx: e.vx + nx * 11 * kb,
+          vz: e.vz + nz * 11 * kb,
+        };
       }
       return { ...e, hp, hurtT: 0.25, vx: e.vx + nx * 11, vz: e.vz + nz * 11 };
     });
@@ -305,6 +350,14 @@ export function updateGame(dt: number): void {
           windupT: 0,
           stuckT: 0,
           returning: false,
+          mode: "chase",
+          modeT: 0,
+          lungeDx: 0,
+          lungeDz: 0,
+          lungeCd: 0,
+          poiseT: 0,
+          aimX: e.spawnX,
+          aimZ: e.spawnZ,
         };
       }
       return { ...e, deadT };
@@ -339,9 +392,16 @@ export function updateGame(dt: number): void {
     let stuckT = e.stuckT;
     let returning = e.returning;
     let leashT = e.leashT;
-    // Boss fireball release: the telegraph finished this tick, so the shot
-    // aims at where the player is *now* — keep moving to dodge it.
-    const windupDone = e.windupT > 0 && windupT <= 0;
+    // Boss attack state machine timers.
+    let mode = e.mode;
+    let modeT = Math.max(0, e.modeT - dt);
+    let lungeCd = Math.max(0, e.lungeCd - dt);
+    let poiseT = Math.max(0, e.poiseT - dt);
+    let lungeDx = e.lungeDx;
+    let lungeDz = e.lungeDz;
+    let aimX = e.aimX;
+    let aimZ = e.aimZ;
+    const modeDone = e.modeT > 0 && modeT <= 0;
     if (returning) {
       // Gave up the chase: pathfind home with A* (not a straight line —
       // straight lines clip through walls and leave the monster moonwalking
@@ -381,6 +441,70 @@ export function updateGame(dt: number): void {
         spd = 0;
       }
     } else if (seesPlayer) {
+      if (e.boss && mode !== "chase") {
+        // ---- Boss attack modes: steering is overridden. ----
+        // Planted by default; lunging sets its own velocity below.
+        tx = e.x;
+        tz = e.z;
+        spd = 0;
+        if (mode === "lungeWarn") {
+          // Brief red-flash warning: something's coming.
+          if (modeDone) {
+            const d = distP || 1;
+            lungeDx = dx / d;
+            lungeDz = dz / d;
+            mode = "lungeWindup";
+            modeT = LUNGE_WINDUP;
+            sfx.bossCharge();
+          }
+        } else if (mode === "lungeWindup") {
+          // Telegraph lane is visible; direction already locked.
+          if (modeDone) {
+            mode = "lunging";
+            modeT = LUNGE_DIST / LUNGE_SPEED;
+            sfx.bossLunge();
+            addTrauma(0.3);
+          }
+        } else if (mode === "lunging") {
+          if (modeDone) {
+            // Ran out of steam without hitting a wall: still stunned.
+            mode = "stunned";
+            modeT = STUN_TIME;
+            lungeCd = LUNGE_CD;
+            sfx.bossStun();
+            addTrauma(0.35);
+          }
+        } else if (mode === "stunned") {
+          // Punish window: the boss just sits there, dazed.
+          if (modeDone) mode = "chase";
+        } else if (mode === "rangedAim") {
+          if (modeDone) {
+            // Release the lobbed shot at the locked aim point.
+            newProjectiles.push({
+              id: nextId++,
+              world: e.world,
+              x: e.x,
+              z: e.z,
+              vx: 0,
+              vz: 0,
+              t: 0,
+              life: LOB_TIME + 0.5,
+              arc: true,
+              sx: e.x,
+              sz: e.z,
+              tx: aimX,
+              tz: aimZ,
+              dur: LOB_TIME,
+              aoe: AOE_R,
+            });
+            rangedCd = BOSS_RANGED_CD;
+            mode = "chase";
+            sfx.bossShoot();
+            emitSpark({ x: e.x, z: e.z, kind: "fire" });
+            addTrauma(0.25);
+          }
+        }
+      } else {
       spd = e.boss ? BOSS_SPEED : ENEMY_SPEED;
       // Chase with A*: repath on a cadence (the boss thinks faster, so it
       // maneuvers around obstacles more intelligently than trash mobs).
@@ -398,18 +522,26 @@ export function updateGame(dt: number): void {
         lastZ = e.z;
         const stillEmpty = path.length === 0;
         if (e.boss) {
-          // Boss stuck check: barely moved over the last repath window while
-          // the player is out of reach, or no route two repaths running
-          // (player somewhere the boss can't reach, e.g. a far corner) ->
-          // telegraph a fireball. This keeps the boss threatening even when
-          // the geometry beats its pathfinding.
-          if (
+          // Boss attack triggers (only from chase mode — never mid-attack).
+          const bossStuck =
             (moved < BOSS_STUCK_MOVE || (prevEmpty && stillEmpty)) &&
-            distP > BOSS_STUCK_RANGE &&
+            distP > BOSS_STUCK_RANGE;
+          if (mode === "chase" && lungeCd <= 0 && distP < LUNGE_RANGE && distP > 1.2) {
+            // Player in lunge range: warn, then telegraph, then dash.
+            mode = "lungeWarn";
+            modeT = LUNGE_WARN;
+            sfx.bossWarn();
+          } else if (
+            mode === "chase" &&
             rangedCd <= 0 &&
-            windupT <= 0
+            (distP > RANGED_TRIGGER || bossStuck)
           ) {
-            windupT = BOSS_WINDUP;
+            // Player at range (or boss can't reach): aim a lobbed shot.
+            // The target locks when aiming starts — keep moving to dodge.
+            mode = "rangedAim";
+            modeT = RANGED_AIM;
+            aimX = x;
+            aimZ = z;
             sfx.bossCharge();
             emitSpark({ x: e.x, z: e.z, kind: "fire" });
             emitSpark({ x: e.x, z: e.z, kind: "fire" });
@@ -447,11 +579,7 @@ export function updateGame(dt: number): void {
         tx = x;
         tz = z;
       }
-      if (windupT > 0) {
-        // Telegraphing: the boss plants its feet and charges the shot.
-        tx = e.x;
-        tz = e.z;
-      }
+      } // end chase-mode else (boss attack modes handled above)
     } else if (!sameWorld && !returning && (path.length > 0 || leashT > 0)) {
       // §8.7: The player crossed into another world mid-chase.
       spd = e.boss ? BOSS_SPEED : ENEMY_SPEED;
@@ -533,25 +661,6 @@ export function updateGame(dt: number): void {
       path = [];
       pathI = 0;
     }
-    // Boss fireball release (the telegraph just finished): hurl it at the
-    // player's current position. Still only 1 damage — first boss, fair.
-    if (windupDone) {
-      const d = distP || 1;
-      newProjectiles.push({
-        id: nextId++,
-        world: e.world,
-        x: e.x + (dx / d) * 1.1,
-        z: e.z + (dz / d) * 1.1,
-        vx: (dx / d) * FIREBALL_SPEED,
-        vz: (dz / d) * FIREBALL_SPEED,
-        t: 0,
-        life: FIREBALL_LIFE,
-      });
-      rangedCd = BOSS_RANGED_CD;
-      sfx.bossShoot();
-      emitSpark({ x: e.x, z: e.z, kind: "fire" });
-      addTrauma(0.25);
-    }
     const ddx = tx - e.x;
     const ddz = tz - e.z;
     const dd = Math.hypot(ddx, ddz) || 1;
@@ -561,6 +670,12 @@ export function updateGame(dt: number): void {
     const k = 1 - Math.exp(-6 * dt);
     let evx = e.vx + ((ddx / dd) * spd * stun - e.vx) * k;
     let evz = e.vz + ((ddz / dd) * spd * stun - e.vz) * k;
+    // Lunging overrides steering: full-speed dash along the locked lane.
+    // Uninterruptible — velocity can't be softened or redirected.
+    if (e.boss && mode === "lunging") {
+      evx = lungeDx * LUNGE_SPEED;
+      evz = lungeDz * LUNGE_SPEED;
+    }
     let ex = e.x + evx * dt;
     let ez = e.z + evz * dt;
     if (circleHitsSolid(eWorld, ex, ez, ENEMY_R, quest.gateOpen)) {
@@ -568,6 +683,15 @@ export function updateGame(dt: number): void {
       ez = e.z;
       evx = 0;
       evz = 0;
+      if (e.boss && mode === "lunging") {
+        // Slammed into a wall mid-lunge: dazed, punish window opens.
+        mode = "stunned";
+        modeT = STUN_TIME;
+        lungeCd = LUNGE_CD;
+        sfx.bossStun();
+        addTrauma(0.5);
+        emitSpark({ x: e.x, z: e.z, kind: "poof" });
+      }
     }
     return {
       ...e,
@@ -588,6 +712,14 @@ export function updateGame(dt: number): void {
       stuckT,
       returning,
       leashT,
+      mode,
+      modeT,
+      lungeDx,
+      lungeDz,
+      lungeCd,
+      poiseT,
+      aimX,
+      aimZ,
       hurtT: Math.max(0, e.hurtT - dt),
       attackCd: Math.max(0, e.attackCd - dt),
     };
@@ -659,8 +791,17 @@ export function updateGame(dt: number): void {
       addTrauma(0.55);
       sfx.hurt();
       const dd = d || 1;
-      vx += ((x - e.x) / dd) * 11;
-      vz += ((z - e.z) / dd) * 11;
+      // A lunging boss blows straight through the player's swing:
+      // the attack is interrupted and the knockback is brutal.
+      const lunging = e.boss && e.mode === "lunging";
+      if (lunging) {
+        swing.active = false;
+        swing.t = 0;
+        swing.cd = Math.max(swing.cd, 0.3);
+      }
+      const kb = lunging ? 16 : 11;
+      vx += ((x - e.x) / dd) * kb;
+      vz += ((z - e.z) / dd) * kb;
       enemies[i] = { ...e, attackCd: 1.0 };
     }
   }
@@ -672,8 +813,46 @@ export function updateGame(dt: number): void {
 
   // ---- boss fireballs ----
   const projectiles: ProjectileState[] = [];
+  const newHazards: HazardState[] = [];
   for (const pr of [...st.projectiles, ...newProjectiles]) {
     const t = pr.t + dt;
+    if (pr.arc) {
+      // Lobbed shot: ballistic arc from launch to the locked target point.
+      if (t >= pr.dur) {
+        // Impact: AoE burst, then a lingering fire hazard.
+        const d = Math.hypot(pr.tx - x, pr.tz - z);
+        if (pr.world === worldId && invulnT <= 0 && d < pr.aoe + PLAYER_R) {
+          hp -= 1;
+          invulnT = 1.0;
+          quest.hurtFlashT = 0.35;
+          addTrauma(0.6);
+          sfx.hurt();
+          const dd = d || 1;
+          vx += ((x - pr.tx) / dd) * 10;
+          vz += ((z - pr.tz) / dd) * 10;
+        }
+        newHazards.push({
+          id: nextId++,
+          world: pr.world,
+          x: pr.tx,
+          z: pr.tz,
+          r: pr.aoe,
+          t: 0,
+          life: FIRE_LIFE,
+        });
+        sfx.explosion();
+        addTrauma(0.45);
+        emitSpark({ x: pr.tx, z: pr.tz, kind: "fire" });
+        emitSpark({ x: pr.tx, z: pr.tz, kind: "fire" });
+        emitSpark({ x: pr.tx, z: pr.tz, kind: "poof" });
+        continue;
+      }
+      const p = Math.min(1, t / pr.dur);
+      const nx = pr.sx + (pr.tx - pr.sx) * p;
+      const nz = pr.sz + (pr.tz - pr.sz) * p;
+      projectiles.push({ ...pr, x: nx, z: nz, t });
+      continue;
+    }
     if (t > pr.life) continue;
     const nx = pr.x + pr.vx * dt;
     const nz = pr.z + pr.vz * dt;
@@ -700,6 +879,25 @@ export function updateGame(dt: number): void {
       }
     }
     projectiles.push({ ...pr, x: nx, z: nz, t });
+  }
+
+  // ---- ground fire: standing in it hurts, keep moving ----
+  const hazards: HazardState[] = [];
+  for (const h of [...st.hazards, ...newHazards]) {
+    const t = h.t + dt;
+    if (t > h.life) continue;
+    if (h.world === worldId && invulnT <= 0) {
+      const d = Math.hypot(h.x - x, h.z - z);
+      if (d < h.r) {
+        hp -= 1;
+        invulnT = 1.0;
+        quest.hurtFlashT = 0.35;
+        addTrauma(0.4);
+        sfx.hurt();
+        emitSpark({ x, z, kind: "fire" });
+      }
+    }
+    hazards.push({ ...h, t });
   }
 
   // ---- chest: victory ----
@@ -775,6 +973,7 @@ export function updateGame(dt: number): void {
     swing,
     enemies,
     projectiles,
+    hazards,
     pickups,
     breakables,
     rupees,

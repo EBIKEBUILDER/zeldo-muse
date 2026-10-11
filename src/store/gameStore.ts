@@ -97,9 +97,36 @@ export interface EnemyState {
   /** §8.7 Portal leash: seconds to wait at a portal entrance when the player
    *  crossed into another world through a non-traversable portal. */
   leashT: number;
+  /** Boss attack state machine. Mobs stay "chase" forever. */
+  mode: BossMode;
+  /** Countdown for the current mode (warn / windup / lunge / stun / aim). */
+  modeT: number;
+  /** Locked lunge direction (unit vector), set when the windup starts. */
+  lungeDx: number;
+  lungeDz: number;
+  /** Cooldown before the boss may lunge again. */
+  lungeCd: number;
+  /** Poise: after a sword hit the boss shrugs off knockback/hitstun briefly
+   *  (still takes damage). This kills the sword-spam perma-lock exploit. */
+  poiseT: number;
+  /** Locked ranged-attack target point (where the lobbed shot will land). */
+  aimX: number;
+  aimZ: number;
 }
 
-/** Boss fireball: hostile projectile. */
+/** Boss attack modes: chase → lungeWarn → lungeWindup → lunging → stunned,
+ *  plus a rangedAim branch for the lobbed fire attack. */
+export type BossMode =
+  | "chase"
+  | "lungeWarn"
+  | "lungeWindup"
+  | "lunging"
+  | "stunned"
+  | "rangedAim";
+
+/** Boss fireball: hostile projectile. Flat shots fly straight; lobbed shots
+ *  travel a ballistic arc from (sx,sz) to (tx,tz) over dur seconds, then
+ *  explode into a ground hazard of radius aoe. */
 export interface ProjectileState {
   id: number;
   world: WorldId;
@@ -107,6 +134,27 @@ export interface ProjectileState {
   z: number;
   vx: number;
   vz: number;
+  /** Age; dies at life (flat) or dur (lobbed). */
+  t: number;
+  life: number;
+  /** Lobbed-arc fields. arc=false means the legacy flat fireball. */
+  arc: boolean;
+  sx: number;
+  sz: number;
+  tx: number;
+  tz: number;
+  dur: number;
+  aoe: number;
+}
+
+/** Ground fire left by a lobbed boss shot: standing inside hurts. */
+export interface HazardState {
+  id: number;
+  world: WorldId;
+  x: number;
+  z: number;
+  /** Damage radius. */
+  r: number;
   /** Age; dies at life. */
   t: number;
   life: number;
@@ -157,6 +205,7 @@ interface GameState {
   swing: SwingState;
   enemies: EnemyState[];
   projectiles: ProjectileState[];
+  hazards: HazardState[];
   pickups: PickupState[];
   breakables: BreakableState[];
   rupees: number;
@@ -203,6 +252,14 @@ function initialEnemies(): EnemyState[] {
         stuckT: 0,
         returning: false,
         leashT: 0,
+        mode: "chase",
+        modeT: 0,
+        lungeDx: 0,
+        lungeDz: 0,
+        lungeCd: 0,
+        poiseT: 0,
+        aimX: s.x,
+        aimZ: s.z,
       });
     }
   }
@@ -241,6 +298,7 @@ function initialState() {
     swing: { active: false, t: 0, cd: 0, didHit: false } as SwingState,
     enemies: initialEnemies(),
     projectiles: [] as ProjectileState[],
+    hazards: [] as HazardState[],
     pickups: [] as PickupState[],
     breakables: initialBreakables(),
     rupees: 0,

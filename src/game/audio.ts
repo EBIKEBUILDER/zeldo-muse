@@ -125,6 +125,27 @@ export const sfx = {
     tone({ freq: 160, freqEnd: 920, dur: 0.55, type: "sawtooth", vol: 0.13 });
     noiseBurst(0.5, 0.05, 900);
   },
+  bossWarn() {
+    // Short aggressive bark: the lunge is coming. Get out of the lane.
+    tone({ freq: 220, freqEnd: 110, dur: 0.18, type: "sawtooth", vol: 0.16 });
+    tone({ freq: 220, freqEnd: 110, dur: 0.18, type: "sawtooth", vol: 0.16, delay: 0.22 });
+  },
+  bossLunge() {
+    // Whoosh + roar as the boss launches down the telegraph lane.
+    noiseBurst(0.35, 0.16, 500);
+    tone({ freq: 90, freqEnd: 320, dur: 0.35, type: "sawtooth", vol: 0.18 });
+  },
+  bossStun() {
+    // Bonk: the boss slams to a stop, dazed. Punish window opens.
+    tone({ freq: 300, freqEnd: 60, dur: 0.4, type: "square", vol: 0.16 });
+    noiseBurst(0.25, 0.12, 300);
+  },
+  explosion() {
+    // Lobbed shot impact: sub thump + fire crackle.
+    tone({ freq: 120, freqEnd: 30, dur: 0.5, type: "sawtooth", vol: 0.2 });
+    noiseBurst(0.4, 0.16, 800);
+    noiseBurst(0.6, 0.08, 2400, 0.1);
+  },
   fireHit() {
     noiseBurst(0.15, 0.14, 1400);
     tone({ freq: 300, freqEnd: 80, dur: 0.18, type: "square", vol: 0.12 });
